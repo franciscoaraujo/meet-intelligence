@@ -45,6 +45,24 @@ public class TranscriptController {
         return ResponseEntity.ok(segments);
     }
 
+    @PostMapping("/live-text")
+    @Operation(summary = "Registrar fala capturada ao vivo no navegador", description = "Recebe fala transcrita em tempo real (Web Speech API / Microfone) e aciona o pipeline de IA")
+    public ResponseEntity<TranscriptSegment> processLiveText(
+            @PathVariable UUID meetingId,
+            @RequestBody LiveTextRequest request) {
+        if (request.getText() == null || request.getText().isBlank()) {
+            return ResponseEntity.badRequest().build();
+        }
+        TranscriptSegment segment = transcriptionService.processLiveTextSegment(
+                meetingId,
+                request.getSpeakerLabel(),
+                request.getText(),
+                request.getStartTimeMs(),
+                request.getEndTimeMs()
+        );
+        return ResponseEntity.ok(segment);
+    }
+
     @PatchMapping("/{segmentId}")
     @Operation(summary = "Corrigir texto da transcrição", description = "Permite ajuste manual de palavras incorretas preservando o original")
     public ResponseEntity<TranscriptSegment> correctSegment(
@@ -60,6 +78,14 @@ public class TranscriptController {
     public static class AudioChunkRequest {
         private String base64Audio;
         private String mimeType = "audio/webm";
+    }
+
+    @Data
+    public static class LiveTextRequest {
+        private String speakerLabel;
+        private String text;
+        private long startTimeMs;
+        private long endTimeMs;
     }
 }
 

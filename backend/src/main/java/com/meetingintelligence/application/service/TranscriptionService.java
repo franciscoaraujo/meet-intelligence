@@ -85,6 +85,45 @@ public class TranscriptionService {
         return savedSegments;
     }
 
+    @Transactional
+    public TranscriptSegment processLiveTextSegment(UUID meetingId, String speakerLabel, String text, long startTimeMs, long endTimeMs) {
+        Meeting meeting = meetingRepository.findById(meetingId)
+                .orElseThrow(() -> new IllegalArgumentException("Reunião não encontrada: " + meetingId));
+
+        List<MeetingParticipant> existingParticipants = participantRepository.findByMeetingId(meetingId);
+        MeetingParticipant participant = existingParticipants.isEmpty() ? null : existingParticipants.get(0);
+
+        TranscriptSegment segment = TranscriptSegment.builder()
+                .meeting(meeting)
+                .participant(participant)
+                .speakerLabel(speakerLabel != null && !speakerLabel.isBlank() ? speakerLabel : "Participante (Voz ao Vivo)")
+                .originalText(text.trim())
+                .startTimeMs(startTimeMs)
+                .endTimeMs(endTimeMs > startTimeMs ? endTimeMs : startTimeMs + 3000L)
+                .confidence(java.math.BigDecimal.valueOf(0.96))
+                .language(meeting.getLanguage() != null ? meeting.getLanguage() : "pt-BR")
+                .source("WEB_SPEECH_LIVE")
+                .build();
+
+        TranscriptSegment saved = segmentRepository.save(segment);
+
+        // Alimenta o agregador semântico que dispara a IA (Insights, Resumo e pgvector)
+        try {
+            chunkAggregatorService.onNewSegment(meeting, saved);
+        } catch (Exception e) {
+            log.warn("Erro ao alimentar agregador semântico de IA: {}", e.getMessage());
+        }
+
+        // Notifica o frontend em tempo real via WebSocket STOMP
+        try {
+            messagingTemplate.convertAndSend("/topic/meetings/" + meetingId + "/transcripts", saved);
+        } catch (Exception e) {
+            log.warn("Erro ao emitir WebSocket para transcrição ao vivo: {}", e.getMessage());
+        }
+
+        return saved;
+    }
+
     @Transactional(readOnly = true)
     public List<TranscriptSegment> getTranscriptsByMeeting(UUID meetingId) {
         return segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);

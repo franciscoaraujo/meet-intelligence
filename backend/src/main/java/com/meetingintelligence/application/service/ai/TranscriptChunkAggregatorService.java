@@ -29,7 +29,7 @@ public class TranscriptChunkAggregatorService {
     private final ConcurrentHashMap<UUID, Long> chunkStartMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Integer> wordCountMap = new ConcurrentHashMap<>();
 
-    private static final int MIN_WORDS_PER_CHUNK = 80;
+    private static final int MIN_WORDS_PER_CHUNK = 25;
     private static final int MAX_WORDS_PER_CHUNK = 250;
 
     @Transactional
