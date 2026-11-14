@@ -53,15 +53,18 @@ export const LiveMeetingPage: React.FC = () => {
   const [interimTranscript, setInterimTranscript] = useState('');
   const [micStatus, setMicStatus] = useState<string>('');
   const [tabAudioActive, setTabAudioActive] = useState<boolean>(false);
+  const [tabAudioLevel, setTabAudioLevel] = useState<number>(0);
   const [manualSpeechInput, setManualSpeechInput] = useState('');
-  const [speakerRole, setSpeakerRole] = useState('Entrevistador Técnico');
-  const speakerRoleRef = useRef<string>('Entrevistador Técnico');
+  const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
+  const speakerRoleRef = useRef<string>('Francisco Araújo');
   const recognitionRef = useRef<any>(null);
   const isRecordingRef = useRef<boolean>(false);
   const recordingSecondsRef = useRef<number>(0);
   const micStreamRef = useRef<MediaStream | null>(null);
   const tabStreamRef = useRef<MediaStream | null>(null);
+  const tabAudioCtxRef = useRef<AudioContext | null>(null);
   const tabIntervalRef = useRef<number | null>(null);
+  const lastTabVoiceMsRef = useRef<number>(0);
   const interimRef = useRef<string>('');
 
   // Tabs do Painel Central
@@ -234,17 +237,48 @@ export const LiveMeetingPage: React.FC = () => {
     setSpeakerRole(role);
   };
 
-  const blobToBase64 = (blob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const res = reader.result as string;
-        const base64 = res.includes(',') ? res.split(',')[1] : res;
-        resolve(base64);
-      };
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
-    });
+  const encodePcmToWavBase64 = (chunks: Float32Array[], sampleRate: number): string => {
+    let totalLength = 0;
+    for (const c of chunks) totalLength += c.length;
+
+    const buffer = new ArrayBuffer(44 + totalLength * 2);
+    const view = new DataView(buffer);
+
+    const writeString = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + totalLength * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true); // PCM chunk size
+    view.setUint16(20, 1, true); // PCM format = 1
+    view.setUint16(22, 1, true); // Mono = 1 channel
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true); // Byte rate
+    view.setUint16(32, 2, true); // Block align
+    view.setUint16(34, 16, true); // 16-bit
+    writeString(36, 'data');
+    view.setUint32(40, totalLength * 2, true);
+
+    let offset = 44;
+    for (const chunk of chunks) {
+      for (let i = 0; i < chunk.length; i++, offset += 2) {
+        const s = Math.max(-1, Math.min(1, chunk[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+    }
+
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    const chunkSize = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
+    }
+    return window.btoa(binary);
   };
 
   const startTabAudioCapture = async () => {
@@ -264,67 +298,92 @@ export const LiveMeetingPage: React.FC = () => {
 
       if (audioTracks.length === 0) {
         alert(
-          'Atenção: Você precisa marcar a caixinha "Compartilhar também o áudio da guia" (Share tab audio) ao selecionar a aba do Google Meet para capturar a voz do entrevistador.'
+          'Atenção: Você precisa marcar a caixinha "Compartilhar também o áudio da guia" (Share tab audio) ao selecionar a aba do Google Meet para capturar a voz do entrevistador na outra máquina.'
         );
       } else {
         setTabAudioActive(true);
         const audioOnlyStream = new MediaStream(audioTracks);
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
-          ? 'audio/webm;codecs=opus'
-          : 'audio/webm';
+        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+        const audioCtx: AudioContext = new AudioCtx({ sampleRate: 16000 });
+        tabAudioCtxRef.current = audioCtx;
 
-        const recordChunk = () => {
+        const source = audioCtx.createMediaStreamSource(audioOnlyStream);
+        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+        const zeroGain = audioCtx.createGain();
+        zeroGain.gain.value = 0;
+
+        let pcmChunks: Float32Array[] = [];
+        let hasVoiceInWindow = false;
+
+        processor.onaudioprocess = (e) => {
+          const input = e.inputBuffer.getChannelData(0);
+          let sumSq = 0;
+          for (let i = 0; i < input.length; i++) {
+            sumSq += input[i] * input[i];
+          }
+          const rms = Math.sqrt(sumSq / input.length);
+          const pct = Math.min(100, Math.round(rms * 350));
+          setTabAudioLevel(pct);
+
+          if (rms > 0.008) {
+            hasVoiceInWindow = true;
+            lastTabVoiceMsRef.current = Date.now();
+          }
+          pcmChunks.push(new Float32Array(input));
+        };
+
+        source.connect(processor);
+        processor.connect(zeroGain);
+        zeroGain.connect(audioCtx.destination);
+
+        const flushTabWavChunk = async () => {
           if (!tabStreamRef.current || audioOnlyStream.getAudioTracks()[0]?.readyState !== 'live') {
             setTabAudioActive(false);
+            setTabAudioLevel(0);
             return;
           }
+          if (pcmChunks.length === 0 || !hasVoiceInWindow) {
+            pcmChunks = [];
+            hasVoiceInWindow = false;
+            return;
+          }
+
+          const chunksToSend = pcmChunks;
+          pcmChunks = [];
+          hasVoiceInWindow = false;
+
           try {
-            const recorder = new MediaRecorder(audioOnlyStream, { mimeType });
-            const chunks: BlobPart[] = [];
-            recorder.ondataavailable = (e) => {
-              if (e.data && e.data.size > 0) chunks.push(e.data);
-            };
-            recorder.onstop = async () => {
-              if (chunks.length > 0) {
-                const blob = new Blob(chunks, { type: mimeType });
-                if (blob.size > 2000) {
-                  try {
-                    const base64Audio = await blobToBase64(blob);
-                    const res = await api.post(`/meetings/${id}/transcripts/chunk`, {
-                      base64Audio,
-                      mimeType: 'audio/webm',
-                    });
-                    if (Array.isArray(res.data) && res.data.length > 0) {
-                      setTranscripts((prev) => {
-                        const next = [...prev];
-                        for (const seg of res.data) {
-                          if (!next.some((s) => s.id === seg.id)) next.push(seg);
-                        }
-                        return next;
-                      });
-                    }
-                  } catch (err) {
-                    console.warn('Erro ao enviar chunk de áudio da guia:', err);
-                  }
+            const base64Audio = encodePcmToWavBase64(chunksToSend, audioCtx.sampleRate);
+            const res = await api.post(`/meetings/${id}/transcripts/chunk`, {
+              base64Audio,
+              mimeType: 'audio/wav',
+            });
+            if (Array.isArray(res.data) && res.data.length > 0) {
+              setTranscripts((prev) => {
+                const next = [...prev];
+                for (const seg of res.data) {
+                  if (!next.some((s) => s.id === seg.id)) next.push(seg);
                 }
-              }
-            };
-            recorder.start();
-            setTimeout(() => {
-              if (recorder.state === 'recording') recorder.stop();
-            }, 6000);
-          } catch (e) {
-            console.warn('Erro no MediaRecorder da guia:', e);
+                return next;
+              });
+              setTimeout(() => refreshAiState(id), 1200);
+            }
+          } catch (err) {
+            console.warn('Erro ao enviar chunk WAV da guia:', err);
           }
         };
 
-        recordChunk();
-        tabIntervalRef.current = window.setInterval(recordChunk, 6200);
+        tabIntervalRef.current = window.setInterval(flushTabWavChunk, 4500);
       }
 
       displayStream.getVideoTracks()[0].onended = () => {
         setTabAudioActive(false);
+        setTabAudioLevel(0);
         if (tabIntervalRef.current) clearInterval(tabIntervalRef.current);
+        if (tabAudioCtxRef.current) {
+          tabAudioCtxRef.current.close().catch(() => {});
+          tabAudioCtxRef.current = null;
+        }
       };
 
       // Garante que o SpeechRecognition do microfone continue ativo após fechar o modal de compartilhamento
@@ -344,6 +403,14 @@ export const LiveMeetingPage: React.FC = () => {
     const text = manualSpeechInput;
     setManualSpeechInput('');
     await sendLiveSpeechSegment(text, speakerRoleRef.current);
+  };
+
+  const resolveActiveSpeaker = (): string => {
+    // Se a guia do Google Meet emitiu voz nos últimos 2.4 segundos, a fala veio da outra máquina (Entrevistador)
+    if (Date.now() - lastTabVoiceMsRef.current < 2400) {
+      return 'Entrevistador (Google Meet)';
+    }
+    return speakerRoleRef.current;
   };
 
   const startBrowserSpeechRecognition = () => {
@@ -370,7 +437,7 @@ export const LiveMeetingPage: React.FC = () => {
 
       recognition.onstart = () => {
         setMicStatus(
-          'Escuta ao vivo ativa (captura sua voz e o áudio ambiente das caixas de som)...'
+          'Microfone ativo (sua voz = Francisco Araújo | Guia Meet = Entrevistador)...'
         );
       };
 
@@ -381,7 +448,7 @@ export const LiveMeetingPage: React.FC = () => {
           if (event.results[i].isFinal) {
             interimRef.current = '';
             setInterimTranscript('');
-            sendLiveSpeechSegment(transcriptPiece, speakerRoleRef.current);
+            sendLiveSpeechSegment(transcriptPiece, resolveActiveSpeaker());
           } else {
             interim += transcriptPiece;
           }
@@ -407,7 +474,7 @@ export const LiveMeetingPage: React.FC = () => {
           const pending = interimRef.current.trim();
           interimRef.current = '';
           setInterimTranscript('');
-          sendLiveSpeechSegment(pending, speakerRoleRef.current);
+          sendLiveSpeechSegment(pending, resolveActiveSpeaker());
         }
         if (isRecordingRef.current) {
           setTimeout(() => {
@@ -458,11 +525,16 @@ export const LiveMeetingPage: React.FC = () => {
     isRecordingRef.current = false;
     setIsRecording(false);
     setTabAudioActive(false);
+    setTabAudioLevel(0);
     setInterimTranscript('');
     setMicStatus('');
     if (tabIntervalRef.current) {
       clearInterval(tabIntervalRef.current);
       tabIntervalRef.current = null;
+    }
+    if (tabAudioCtxRef.current) {
+      tabAudioCtxRef.current.close().catch(() => {});
+      tabAudioCtxRef.current = null;
     }
     if (tabStreamRef.current) {
       tabStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -752,20 +824,9 @@ export const LiveMeetingPage: React.FC = () => {
           {/* Seletor Rápido de Quem Está Falando Agora */}
           <div className="px-3.5 py-2 border-b border-[#e0e3e7] bg-[#edf2fc]/60 flex items-center justify-between gap-2 shrink-0">
             <span className="text-[11px] font-medium text-[#444746]">
-              Atribuir voz capturada a:
+              Voz do seu microfone atribuída a:
             </span>
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => changeSpeakerRole('Entrevistador Técnico')}
-                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                  speakerRole === 'Entrevistador Técnico'
-                    ? 'bg-[#0b57d0] text-white shadow-2xs'
-                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
-                }`}
-              >
-                🎤 Entrevistador
-              </button>
               <button
                 type="button"
                 onClick={() => changeSpeakerRole('Francisco Araújo')}
@@ -777,8 +838,40 @@ export const LiveMeetingPage: React.FC = () => {
               >
                 👤 Francisco Araújo (Você)
               </button>
+              <button
+                type="button"
+                onClick={() => changeSpeakerRole('Entrevistador Técnico')}
+                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                  speakerRole === 'Entrevistador Técnico'
+                    ? 'bg-[#0b57d0] text-white shadow-2xs'
+                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
+                }`}
+              >
+                🎤 Entrevistador
+              </button>
             </div>
           </div>
+
+          {/* Medidor em Tempo Real do Áudio Vindo da Guia do Google Meet (Outra Máquina) */}
+          {tabAudioActive && (
+            <div className="px-3.5 py-1.5 border-b border-[#c4eed0] bg-[#e6f4ea] flex items-center justify-between gap-3 shrink-0">
+              <span className="text-[11px] font-semibold text-[#137333] flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#137333] animate-pulse" />
+                Áudio da Guia Meet (Entrevistador na outra máquina):
+              </span>
+              <div className="flex items-center gap-2 w-36">
+                <div className="flex-1 h-2 bg-white rounded-full overflow-hidden border border-[#c4eed0]">
+                  <div
+                    className="h-full bg-[#137333] transition-all duration-100"
+                    style={{ width: `${Math.max(4, tabAudioLevel)}%` }}
+                  />
+                </div>
+                <span className="text-[10px] font-mono font-bold text-[#137333] w-8 text-right">
+                  {tabAudioLevel}%
+                </span>
+              </div>
+            </div>
+          )}
 
           <div className="flex-1 p-4 overflow-y-auto space-y-3">
             {isRecording && micStatus && (
