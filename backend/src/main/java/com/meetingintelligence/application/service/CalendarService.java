@@ -4,9 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetingintelligence.application.dto.CalendarEventDto;
 import com.meetingintelligence.domain.entity.Meeting;
+import com.meetingintelligence.domain.entity.Organization;
 import com.meetingintelligence.domain.entity.User;
+import com.meetingintelligence.domain.enums.CaptureMechanism;
 import com.meetingintelligence.domain.enums.MeetingStatus;
 import com.meetingintelligence.infrastructure.persistence.repository.MeetingRepository;
+import com.meetingintelligence.infrastructure.persistence.repository.OrganizationRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +38,7 @@ public class CalendarService {
 
     private final UserRepository userRepository;
     private final MeetingRepository meetingRepository;
+    private final OrganizationRepository organizationRepository;
     private final ObjectMapper objectMapper;
     private final RestTemplate restTemplate = new RestTemplate();
 
@@ -60,7 +64,7 @@ public class CalendarService {
         return listUpcomingEvents(userId, organizationId);
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public List<CalendarEventDto> listUpcomingEvents(UUID userId, UUID organizationId) {
         log.info("Buscando APENAS reuniões reais agendadas no Google Meet para usuário {} / organização {}", userId, organizationId);
 
@@ -73,7 +77,7 @@ public class CalendarService {
         if (userOpt.isPresent() && userOpt.get().getGoogleRefreshToken() != null && !userOpt.get().getGoogleRefreshToken().isBlank()) {
             String accessToken = userOpt.get().getGoogleRefreshToken();
             try {
-                List<CalendarEventDto> googleEvents = fetchFromGoogleCalendarApi(accessToken, organizationId);
+                List<CalendarEventDto> googleEvents = fetchFromGoogleCalendarApi(accessToken, organizationId, userOpt.get());
                 for (CalendarEventDto evt : googleEvents) {
                     result.add(evt);
                     if (evt.getId() != null) seenEventIds.add(evt.getId());
@@ -117,13 +121,14 @@ public class CalendarService {
         return result;
     }
 
-    private List<CalendarEventDto> fetchFromGoogleCalendarApi(String accessToken, UUID organizationId) throws Exception {
+    private List<CalendarEventDto> fetchFromGoogleCalendarApi(String accessToken, UUID organizationId, User hostUser) throws Exception {
+        // Janela ampla (24 meses atrás até eventos futuros) para evitar bloqueio caso o relógio local do SO esteja adiantado
         String timeMin = URLEncoder.encode(
-                OffsetDateTime.now(ZoneOffset.UTC).minusHours(2).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                OffsetDateTime.now(ZoneOffset.UTC).minusMonths(24).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
                 StandardCharsets.UTF_8
         );
         String url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=" + timeMin
-                + "&singleEvents=true&orderBy=startTime&maxResults=50";
+                + "&singleEvents=true&orderBy=startTime&maxResults=100";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
@@ -135,7 +140,10 @@ public class CalendarService {
         if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
             JsonNode root = objectMapper.readTree(response.getBody());
             JsonNode items = root.path("items");
+            Organization org = organizationId != null ? organizationRepository.findById(organizationId).orElse(null) : null;
+
             if (items.isArray()) {
+                log.info("Google Calendar API retornou {} eventos totais na agenda.", items.size());
                 for (JsonNode item : items) {
                     String status = item.path("status").asText("");
                     if ("cancelled".equalsIgnoreCase(status)) {
@@ -167,11 +175,28 @@ public class CalendarService {
                     }
 
                     UUID existingMeetingId = null;
-                    if (organizationId != null && eventId != null) {
-                        existingMeetingId = meetingRepository
-                                .findByOrganizationIdAndGoogleCalendarEventId(organizationId, eventId)
-                                .map(Meeting::getId)
-                                .orElse(null);
+                    if (organizationId != null && eventId != null && org != null) {
+                        Optional<Meeting> existingOpt = meetingRepository
+                                .findByOrganizationIdAndGoogleCalendarEventId(organizationId, eventId);
+                        if (existingOpt.isPresent()) {
+                            existingMeetingId = existingOpt.get().getId();
+                        } else {
+                            // Sincroniza o evento agendado real do Google Meet no banco da organização
+                            Meeting syncedMeeting = meetingRepository.save(Meeting.builder()
+                                    .organization(org)
+                                    .createdBy(hostUser)
+                                    .title(summary)
+                                    .description(description)
+                                    .status(MeetingStatus.SCHEDULED)
+                                    .captureMechanism(CaptureMechanism.BROWSER_CAPTURE)
+                                    .googleMeetLink(meetLink)
+                                    .googleCalendarEventId(eventId)
+                                    .scheduledStart(startTime)
+                                    .scheduledEnd(endTime)
+                                    .language("pt-BR")
+                                    .build());
+                            existingMeetingId = syncedMeeting.getId();
+                        }
                     }
 
                     meetEvents.add(CalendarEventDto.builder()
@@ -186,6 +211,9 @@ public class CalendarService {
                             .attendees(attendees)
                             .build());
                 }
+                // Ordena da reunião mais recente/próxima para a mais antiga
+                meetEvents.sort(Comparator.comparing(CalendarEventDto::getStartTime).reversed());
+                log.info("Foram filtradas {} reuniões reais com link do Google Meet.", meetEvents.size());
             }
         }
 
