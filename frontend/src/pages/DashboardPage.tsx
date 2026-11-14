@@ -203,9 +203,20 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {syncError && (
-        <div className="p-4 rounded-2xl bg-[#f9dedc] border border-[#f2b8b5] text-[#b3261e] text-xs flex items-center gap-2.5">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{syncError}</span>
+        <div className="p-4 rounded-2xl bg-[#f9dedc] border border-[#f2b8b5] text-[#b3261e] text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{syncError}</span>
+          </div>
+          <a
+            href="https://console.developers.google.com/apis/api/calendar-json.googleapis.com/overview?project=726281906025"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-[#b3261e] text-white font-medium text-xs hover:bg-[#8c1d18] shrink-0 transition-colors"
+          >
+            <span>Ativar Google Calendar API no Google Cloud</span>
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
         </div>
       )}
 

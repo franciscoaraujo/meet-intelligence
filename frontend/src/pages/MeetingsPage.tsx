@@ -21,6 +21,8 @@ export const MeetingsPage: React.FC = () => {
   const loadMeetings = async () => {
     try {
       setLoading(true);
+      // Sincroniza primeiro eventos reais agendados no Google Meet do usuário
+      await api.get('/calendar/events').catch(() => {});
       const res = await api.get('/meetings?size=50');
       setMeetings(res.data.content || []);
     } catch (error) {
