@@ -24,8 +24,14 @@ export const LoginPage: React.FC = () => {
   const { loginWithGoogle, loginDemo } = useAuth();
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const DEFAULT_GOOGLE_CLIENT_ID =
+    '726281906025-91lbpv9q3v65qqv2uf1117d10smgnm1u.apps.googleusercontent.com';
   const [googleClientId, setGoogleClientId] = useState<string>(() => {
-    return import.meta.env.VITE_GOOGLE_CLIENT_ID || localStorage.getItem('google_client_id') || '';
+    return (
+      import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+      localStorage.getItem('google_client_id') ||
+      DEFAULT_GOOGLE_CLIENT_ID
+    );
   });
   const [clientIdInput, setClientIdInput] = useState<string>(googleClientId);
   const [directTokenInput, setDirectTokenInput] = useState<string>('');

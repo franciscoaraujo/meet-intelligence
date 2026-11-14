@@ -12,11 +12,15 @@ import {
   RefreshCw,
   KeyRound,
   CheckCircle2,
-  Activity
+  Activity,
+  AlertCircle
 } from 'lucide-react';
 import { api } from '../services/api';
 import { Meeting, CalendarEvent } from '../types';
 import { NewMeetingModal } from '../components/modals/NewMeetingModal';
+
+const DEFAULT_GOOGLE_CLIENT_ID =
+  '726281906025-91lbpv9q3v65qqv2uf1117d10smgnm1u.apps.googleusercontent.com';
 
 export const DashboardPage: React.FC = () => {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -27,6 +31,7 @@ export const DashboardPage: React.FC = () => {
   const [isConnectCalendarOpen, setIsConnectCalendarOpen] = useState(false);
   const [googleAccessToken, setGoogleAccessToken] = useState('');
   const [connectingCalendar, setConnectingCalendar] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -37,6 +42,7 @@ export const DashboardPage: React.FC = () => {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
+      setSyncError(null);
       const [meetingsRes, calendarRes, statusRes, metricsRes] = await Promise.allSettled([
         api.get('/meetings?size=10'),
         api.get('/calendar/events'),
@@ -63,11 +69,65 @@ export const DashboardPage: React.FC = () => {
     }
   };
 
+  /**
+   * Abre o popup oficial do Google OAuth 2.0 (Google Identity Services)
+   * para autorizar a leitura da agenda real do Google Calendar / Google Meet
+   */
+  const handleAuthorizeGoogleCalendarPopup = () => {
+    setSyncError(null);
+    const clientId =
+      localStorage.getItem('google_client_id') ||
+      import.meta.env.VITE_GOOGLE_CLIENT_ID ||
+      DEFAULT_GOOGLE_CLIENT_ID;
+
+    if (!window.google?.accounts?.oauth2) {
+      setIsConnectCalendarOpen(true);
+      setSyncError('SDK do Google Identity Services indisponível. Cole seu token OAuth 2.0 manualmente abaixo.');
+      return;
+    }
+
+    try {
+      const tokenClient = window.google.accounts.oauth2.initTokenClient({
+        client_id: clientId,
+        scope: 'https://www.googleapis.com/auth/calendar.events.readonly',
+        prompt: 'consent',
+        callback: async (tokenResponse: any) => {
+          if (tokenResponse?.error) {
+            setSyncError(`Autorização Google recusada: ${tokenResponse.error}`);
+            return;
+          }
+          if (tokenResponse?.access_token) {
+            try {
+              setConnectingCalendar(true);
+              const res = await api.post('/calendar/connect', {
+                accessToken: tokenResponse.access_token
+              });
+              setCalendarEvents(res.data || []);
+              setCalendarConnected(true);
+              setIsConnectCalendarOpen(false);
+            } catch (err: any) {
+              setSyncError(
+                'Não foi possível buscar os eventos no Google Calendar. Verifique se a "Google Calendar API" está ativada em APIs & Services > Library no seu projeto do Google Cloud.'
+              );
+            } finally {
+              setConnectingCalendar(false);
+            }
+          }
+        }
+      });
+
+      tokenClient.requestAccessToken();
+    } catch (err) {
+      setIsConnectCalendarOpen(true);
+    }
+  };
+
   const handleConnectGoogleCalendar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!googleAccessToken.trim()) return;
     try {
       setConnectingCalendar(true);
+      setSyncError(null);
       const res = await api.post('/calendar/connect', {
         accessToken: googleAccessToken.trim()
       });
@@ -77,7 +137,7 @@ export const DashboardPage: React.FC = () => {
       setIsConnectCalendarOpen(false);
     } catch (error) {
       console.error('Erro ao sincronizar Google Calendar:', error);
-      alert('Não foi possível sincronizar o Google Calendar. Verifique o Access Token OAuth2.');
+      setSyncError('Não foi possível sincronizar o Google Calendar. Verifique o Access Token OAuth2.');
     } finally {
       setConnectingCalendar(false);
     }
@@ -123,12 +183,14 @@ export const DashboardPage: React.FC = () => {
         </div>
         <div className="flex items-center gap-3">
           <button
-            onClick={() => loadDashboardData()}
-            disabled={loading}
+            onClick={() =>
+              calendarConnected ? loadDashboardData() : handleAuthorizeGoogleCalendarPopup()
+            }
+            disabled={loading || connectingCalendar}
             className="md-btn-outlined"
           >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            Sincronizar Google Meet
+            <RefreshCw className={`w-4 h-4 ${loading || connectingCalendar ? 'animate-spin' : ''}`} />
+            {calendarConnected ? 'Atualizar Agenda Google Meet' : 'Sincronizar Google Meet (OAuth)'}
           </button>
           <button
             onClick={() => setIsModalOpen(true)}
@@ -139,6 +201,13 @@ export const DashboardPage: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {syncError && (
+        <div className="p-4 rounded-2xl bg-[#f9dedc] border border-[#f2b8b5] text-[#b3261e] text-xs flex items-center gap-2.5">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{syncError}</span>
+        </div>
+      )}
 
       {/* Indicadores Operacionais — Material 3 Outlined Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -224,7 +293,7 @@ export const DashboardPage: React.FC = () => {
                 </h2>
               </div>
               <button
-                onClick={() => setIsConnectCalendarOpen(!isConnectCalendarOpen)}
+                onClick={handleAuthorizeGoogleCalendarPopup}
                 className={`text-xs px-3 py-1 rounded-full border font-medium flex items-center gap-1.5 transition-colors cursor-pointer ${
                   calendarConnected
                     ? 'text-[#146c2e] bg-[#e6f4ea] border-[#c4eed0]'
@@ -239,7 +308,7 @@ export const DashboardPage: React.FC = () => {
                 ) : (
                   <>
                     <KeyRound className="w-3.5 h-3.5" />
-                    Conectar Google Calendar
+                    Autorizar Google Calendar
                   </>
                 )}
               </button>
@@ -286,14 +355,14 @@ export const DashboardPage: React.FC = () => {
                     Nenhuma reunião agendada no Google Meet encontrada
                   </p>
                   <p className="text-xs text-[#444746] max-w-sm mx-auto">
-                    Conecte sua agenda do Google Workspace ou vincule o link de uma reunião já agendada.
+                    Clique em Autorizar Google Calendar para buscar suas reuniões reais agendadas ou vincule o link de uma reunião.
                   </p>
                   <div className="flex items-center justify-center gap-3 pt-2">
                     <button
-                      onClick={() => setIsConnectCalendarOpen(true)}
+                      onClick={handleAuthorizeGoogleCalendarPopup}
                       className="md-btn-tonal text-xs py-1.5 px-3.5"
                     >
-                      Conectar Google Calendar
+                      Autorizar Google Calendar (OAuth)
                     </button>
                     <button
                       onClick={() => setIsModalOpen(true)}
