@@ -1,0 +1,91 @@
+# ==============================================================================
+# MEETING INTELLIGENCE - AMBIENTE DE DESENVOLVIMENTO DOCKER COMPOSE
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # PostgreSQL 16 com extensão pgvector habilitada nativamente
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: meet_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: meet_intelligence
+      POSTGRES_USER: meet_user
+      POSTGRES_PASSWORD: meet_secure_password
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init-extensions.sql:/docker-entrypoint-initdb.d/01-init-extensions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U meet_user -d meet_intelligence"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # Redis 7 - Cache e Rate Limiting
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: meet_redis
+    restart: unless-stopped
+    ports:
+      - "6389:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # RabbitMQ 3.13 com painel de gerenciamento
+  # ----------------------------------------------------------------------------
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    container_name: meet_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: meet_admin
+      RABBITMQ_DEFAULT_PASS: meet_rabbit_password
+    ports:
+      - "5675:5672"   # Porta do protocolo AMQP isolada
+      - "15675:15672" # Painel Web Management isolado
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------------
+  # MinIO (Drop-in pgsty/silo) - S3 Compatible Object Storage
+  # ----------------------------------------------------------------------------
+  minio:
+    image: pgsty/silo:latest
+    container_name: meet_minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: minio_admin
+      MINIO_ROOT_PASSWORD: minio_secure_password
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"   # API S3
+      - "9001:9001"   # Painel Web MinIO Console
+    volumes:
+      - minio_data:/data
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  rabbitmq_data:
+    driver: local
+  minio_data:
+    driver: local
