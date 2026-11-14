@@ -51,9 +51,14 @@ export const LiveMeetingPage: React.FC = () => {
 
   // Estados de captura de voz ao vivo (Web Speech API) e envio direto de falas
   const [interimTranscript, setInterimTranscript] = useState('');
+  const [micStatus, setMicStatus] = useState<string>('');
   const [manualSpeechInput, setManualSpeechInput] = useState('');
   const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
   const recognitionRef = useRef<any>(null);
+  const isRecordingRef = useRef<boolean>(false);
+  const recordingSecondsRef = useRef<number>(0);
+  const micStreamRef = useRef<MediaStream | null>(null);
+  const interimRef = useRef<string>('');
 
   // Tabs do Painel Central
   const [activeTab, setActiveTab] = useState<'insights' | 'summary' | 'tasks' | 'decisions'>('insights');
@@ -98,7 +103,11 @@ export const LiveMeetingPage: React.FC = () => {
   useEffect(() => {
     if (isRecording) {
       timerRef.current = window.setInterval(() => {
-        setRecordingSeconds((prev) => prev + 1);
+        setRecordingSeconds((prev) => {
+          const next = prev + 1;
+          recordingSecondsRef.current = next;
+          return next;
+        });
       }, 1000);
     } else if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -148,7 +157,7 @@ export const LiveMeetingPage: React.FC = () => {
   const sendLiveSpeechSegment = async (text: string, speaker = speakerRole) => {
     if (!id || !text.trim()) return;
     try {
-      const startMs = recordingSeconds * 1000;
+      const startMs = recordingSecondsRef.current * 1000;
       const res = await api.post(`/meetings/${id}/transcripts/live-text`, {
         speakerLabel: speaker,
         text: text.trim(),
@@ -177,29 +186,75 @@ export const LiveMeetingPage: React.FC = () => {
   const startBrowserSpeechRecognition = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) return;
+    if (!SpeechRecognition) {
+      setMicStatus('Navegador sem suporte a Web Speech API (use Google Chrome ou Edge).');
+      return;
+    }
 
     try {
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.onend = null;
+          recognitionRef.current.stop();
+        } catch (e) {}
+      }
+
       const recognition = new SpeechRecognition();
-      recognition.lang = meeting?.language || 'pt-BR';
+      recognition.lang = 'pt-BR';
       recognition.continuous = true;
       recognition.interimResults = true;
+      recognition.maxAlternatives = 1;
+
+      recognition.onstart = () => {
+        setMicStatus('Microfone ativo — escutando sua voz em português...');
+      };
 
       recognition.onresult = (event: any) => {
         let interim = '';
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const transcriptPiece = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
+            interimRef.current = '';
             setInterimTranscript('');
-            sendLiveSpeechSegment(transcriptPiece, 'Microfone ao Vivo');
+            sendLiveSpeechSegment(transcriptPiece, speakerRole || 'Francisco Araújo');
           } else {
             interim += transcriptPiece;
           }
         }
-        if (interim) setInterimTranscript(interim);
+        if (interim) {
+          interimRef.current = interim;
+          setInterimTranscript(interim);
+        }
       };
 
-      recognition.onerror = () => {};
+      recognition.onerror = (event: any) => {
+        console.warn('Evento SpeechRecognition:', event.error);
+        if (event.error === 'not-allowed') {
+          setMicStatus('Permissão de microfone negada no navegador. Libere o cadeado ao lado da URL.');
+        } else if (event.error === 'no-speech') {
+          setMicStatus('Microfone ativo — aguardando você falar...');
+        }
+      };
+
+      // Reinicia automaticamente a escuta contínua enquanto a captura estiver ligada
+      recognition.onend = () => {
+        if (interimRef.current && interimRef.current.trim()) {
+          const pending = interimRef.current.trim();
+          interimRef.current = '';
+          setInterimTranscript('');
+          sendLiveSpeechSegment(pending, speakerRole || 'Francisco Araújo');
+        }
+        if (isRecordingRef.current) {
+          setTimeout(() => {
+            if (isRecordingRef.current) {
+              try {
+                recognition.start();
+              } catch (e) {}
+            }
+          }, 200);
+        }
+      };
+
       recognition.start();
       recognitionRef.current = recognition;
     } catch (err) {
@@ -210,31 +265,39 @@ export const LiveMeetingPage: React.FC = () => {
   const toggleRecording = async () => {
     if (!isRecording) {
       try {
-        await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`).catch(() => {});
-        setIsRecording(true);
-        startBrowserSpeechRecognition();
-
-        if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
-          const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-          stream.getVideoTracks()[0].onended = () => stopRecording();
+        // 1. Garante permissão de microfone do navegador primeiro
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          micStreamRef.current = micStream;
         }
-      } catch (err) {
-        console.warn('Captura de tela ignorada; mantendo escuta de microfone ativa:', err);
-        setIsRecording(true);
+      } catch (micErr) {
+        console.warn('Aviso ao solicitar getUserMedia:', micErr);
       }
+
+      await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`).catch(() => {});
+      isRecordingRef.current = true;
+      setIsRecording(true);
+      startBrowserSpeechRecognition();
     } else {
       stopRecording();
     }
   };
 
   const stopRecording = async () => {
+    isRecordingRef.current = false;
     setIsRecording(false);
     setInterimTranscript('');
+    setMicStatus('');
     if (recognitionRef.current) {
       try {
+        recognitionRef.current.onend = null;
         recognitionRef.current.stop();
       } catch (e) {}
       recognitionRef.current = null;
+    }
+    if (micStreamRef.current) {
+      micStreamRef.current.getTracks().forEach((t) => t.stop());
+      micStreamRef.current = null;
     }
     if (id) {
       await api.patch(`/meetings/${id}/status?status=COMPLETED`).catch(() => {});
@@ -487,6 +550,15 @@ export const LiveMeetingPage: React.FC = () => {
           </div>
 
           <div className="flex-1 p-4 overflow-y-auto space-y-3">
+            {isRecording && micStatus && (
+              <div className="px-3.5 py-2 rounded-xl bg-[#e6f4ea] border border-[#c4eed0] text-[#146c2e] text-xs font-medium flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#146c2e] animate-ping" />
+                  {micStatus}
+                </span>
+                <span className="text-[10px] uppercase font-semibold">PT-BR</span>
+              </div>
+            )}
             {filteredTranscripts.length === 0 ? (
               <div className="text-center py-12 text-[#444746] text-xs">
                 Nenhum áudio transcrito ainda. Inicie a captura ou envie um arquivo de mídia para começar.
