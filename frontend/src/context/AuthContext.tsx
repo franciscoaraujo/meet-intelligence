@@ -6,7 +6,7 @@ interface AuthContextType {
   user: User | null;
   token: string | null;
   isAuthenticated: boolean;
-  loginWithGoogle: (credential: string) => Promise<void>;
+  loginWithGoogle: (credential: string, accessToken?: string) => Promise<void>;
   loginDemo: () => Promise<void>;
   logout: () => void;
 }
@@ -36,8 +36,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [user]);
 
-  const loginWithGoogle = async (credential: string) => {
-    const response = await api.post('/auth/google', { credential });
+  const loginWithGoogle = async (credential: string, accessToken?: string) => {
+    const response = await api.post('/auth/google', {
+      credential,
+      accessToken: accessToken || (credential.startsWith('ya29.') ? credential : undefined),
+    });
     const { token: jwtToken, ...userData } = response.data;
     setToken(jwtToken);
     setUser(userData);
@@ -46,7 +49,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginDemo = async () => {
     const response = await api.post('/auth/google', {
       credential: 'demo.user@meetingintelligence.ai',
-      organizationName: 'Empresa Inovadora SaaS'
+      organizationName: 'Empresa Inovadora SaaS',
     });
     const { token: jwtToken, ...userData } = response.data;
     setToken(jwtToken);
@@ -83,4 +86,3 @@ export const useAuth = () => {
   }
   return context;
 };
-

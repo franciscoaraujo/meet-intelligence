@@ -89,6 +89,7 @@ export const AppLayout: React.FC = () => {
               <img
                 src={user.avatarUrl}
                 alt="avatar"
+                referrerPolicy="no-referrer"
                 className="w-8 h-8 rounded-full border border-[#c4c7c5]"
               />
             ) : (
