@@ -84,15 +84,17 @@ public class CalendarService {
             }
         }
 
-        // 2. Inclui reuniões futuras agendadas (SCHEDULED) no banco da organização
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        // 2. Inclui reuniões de hoje e futuras agendadas (SCHEDULED) no banco da organização
+        OffsetDateTime startOfToday = LocalDate.now(ZoneOffset.ofHours(-3))
+                .atStartOfDay()
+                .atOffset(ZoneOffset.ofHours(-3));
         if (organizationId != null) {
             List<Meeting> scheduledMeetings = meetingRepository.findByOrganizationIdAndStatusOrderByScheduledStartAsc(
                     organizationId, MeetingStatus.SCHEDULED
             );
             for (Meeting m : scheduledMeetings) {
-                if (m.getScheduledEnd() != null && m.getScheduledEnd().isBefore(now)) {
-                    continue; // Ignora reuniões que já terminaram no passado
+                if (m.getScheduledEnd() != null && m.getScheduledEnd().isBefore(startOfToday)) {
+                    continue; // Ignora reuniões de dias anteriores que já passaram
                 }
                 String calId = m.getGoogleCalendarEventId() != null && !m.getGoogleCalendarEventId().isBlank()
                         ? m.getGoogleCalendarEventId()
@@ -120,8 +122,10 @@ public class CalendarService {
     }
 
     private List<CalendarEventDto> fetchFromGoogleCalendarApi(String accessToken, UUID organizationId, User hostUser) throws Exception {
-        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
-        String timeMin = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
+        OffsetDateTime startOfToday = LocalDate.now(ZoneOffset.ofHours(-3))
+                .atStartOfDay()
+                .atOffset(ZoneOffset.ofHours(-3));
+        String timeMin = startOfToday.toInstant().atOffset(ZoneOffset.UTC).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         String url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=" + timeMin
                 + "&singleEvents=true&orderBy=startTime&maxResults=50";
 
@@ -159,8 +163,8 @@ public class CalendarService {
                     if (startTime == null) continue;
                     if (endTime == null) endTime = startTime.plusHours(1);
 
-                    // Ignora reuniões que já terminaram
-                    if (endTime.isBefore(now)) {
+                    // Ignora reuniões de dias anteriores
+                    if (endTime.isBefore(startOfToday)) {
                         continue;
                     }
 
@@ -175,7 +179,13 @@ public class CalendarService {
                     }
 
                     String eventId = item.path("id").asText();
-                    String summary = item.path("summary").asText("Reunião Agendada");
+                    String rawSummary = item.path("summary").asText("").trim();
+                    String organizerEmail = item.path("organizer").path("email").asText("");
+                    String summary = !rawSummary.isBlank()
+                            ? rawSummary
+                            : (!organizerEmail.isBlank()
+                                ? "Reunião Google Meet (" + organizerEmail + ")"
+                                : "Reunião Google Meet Agendada");
 
                     List<String> attendees = new ArrayList<>();
                     JsonNode attendeesNode = item.path("attendees");
