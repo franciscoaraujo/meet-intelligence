@@ -110,14 +110,11 @@ public class TranscriptionService {
             return Collections.emptyList();
         }
         Optional<OrganizationAiConfig> cfgOpt = aiConfigRepository.findByOrganizationId(meeting.getOrganization().getId());
-        if (cfgOpt.isEmpty()) {
-            return Collections.emptyList();
-        }
-        OrganizationAiConfig cfg = cfgOpt.get();
+        OrganizationAiConfig cfg = cfgOpt.orElse(null);
         String transcribedText = null;
 
         // 1. Tenta com Google Gemini Multimodal Audio (se a chave Gemini estiver configurada)
-        if (cfg.getGeminiApiKey() != null && !cfg.getGeminiApiKey().isBlank()) {
+        if (cfg != null && cfg.getGeminiApiKey() != null && !cfg.getGeminiApiKey().isBlank() && !cfg.getGeminiApiKey().startsWith("wrkspc_")) {
             try {
                 String model = (cfg.getGeminiModel() != null && !cfg.getGeminiModel().isBlank())
                         ? cfg.getGeminiModel()
@@ -163,7 +160,7 @@ public class TranscriptionService {
         }
 
         // 2. Fallback para OpenAI Whisper (se a chave OpenAI estiver configurada)
-        if (transcribedText == null && cfg.getOpenAiApiKey() != null && !cfg.getOpenAiApiKey().isBlank()) {
+        if (transcribedText == null && cfg != null && cfg.getOpenAiApiKey() != null && !cfg.getOpenAiApiKey().isBlank()) {
             try {
                 HttpHeaders headers = new HttpHeaders();
                 headers.setBearerAuth(cfg.getOpenAiApiKey().trim());
@@ -175,7 +172,7 @@ public class TranscriptionService {
                 ByteArrayResource resource = new ByteArrayResource(audioBytes) {
                     @Override
                     public String getFilename() {
-                        return "tab-audio.webm";
+                        return (mimeType != null && mimeType.contains("wav")) ? "tab-audio.wav" : "tab-audio.webm";
                     }
                 };
                 body.add("file", resource);
@@ -197,19 +194,77 @@ public class TranscriptionService {
             }
         }
 
+        // 3. Fallback nativo gratuito (PCM WAV da Guia do Google Meet via Google Speech Recognition sem necessidade de chave de API)
+        boolean isWav = (mimeType != null && mimeType.toLowerCase().contains("wav"))
+                || (audioBytes.length > 12 && audioBytes[0] == 'R' && audioBytes[1] == 'I' && audioBytes[2] == 'F' && audioBytes[3] == 'F');
+        if (transcribedText == null && isWav) {
+            transcribedText = transcribeWavViaLocalGoogleStt(audioBytes);
+        }
+
         if (transcribedText != null && !transcribedText.isBlank()) {
-            long nowMs = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meeting.getId()).size() * 6000L;
+            List<TranscriptSegment> existing = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meeting.getId());
+            String normalizedNew = transcribedText.trim().toLowerCase();
+            int checkStart = Math.max(0, existing.size() - 3);
+            for (int i = checkStart; i < existing.size(); i++) {
+                String prevText = existing.get(i).getOriginalText();
+                if (prevText != null && prevText.trim().equalsIgnoreCase(normalizedNew)) {
+                    return Collections.emptyList();
+                }
+            }
+
+            long nowMs = existing.size() * 5000L;
+            log.info("Áudio do entrevistador (Guia Google Meet) transcrito com sucesso: '{}'", transcribedText);
             TranscriptSegment saved = processLiveTextSegment(
                     meeting.getId(),
-                    "Entrevistador (Áudio do Meet)",
+                    "Entrevistador (Google Meet)",
                     transcribedText,
                     nowMs,
-                    nowMs + 6000L
+                    nowMs + 5000L
             );
             return List.of(saved);
         }
 
         return Collections.emptyList();
+    }
+
+    private String transcribeWavViaLocalGoogleStt(byte[] wavBytes) {
+        java.nio.file.Path tempWav = null;
+        try {
+            tempWav = java.nio.file.Files.createTempFile("meet_tab_audio_", ".wav");
+            java.nio.file.Files.write(tempWav, wavBytes);
+
+            String pyScript = "import sys, speech_recognition as sr\n"
+                    + "sys.stdout.reconfigure(encoding='utf-8')\n"
+                    + "r = sr.Recognizer()\n"
+                    + "with sr.AudioFile(sys.argv[1]) as source:\n"
+                    + "    audio = r.record(source)\n"
+                    + "try:\n"
+                    + "    print(r.recognize_google(audio, language='pt-BR'))\n"
+                    + "except Exception:\n"
+                    + "    pass\n";
+
+            ProcessBuilder pb = new ProcessBuilder("python", "-c", pyScript, tempWav.toAbsolutePath().toString());
+            pb.redirectErrorStream(true);
+            Process proc = pb.start();
+            boolean finished = proc.waitFor(8, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                proc.destroyForcibly();
+                return null;
+            }
+            String output = new String(proc.getInputStream().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8).trim();
+            if (!output.isBlank() && !output.contains("Traceback")) {
+                return output;
+            }
+        } catch (Exception e) {
+            log.warn("Erro na transcrição WAV da guia: {}", e.getMessage());
+        } finally {
+            if (tempWav != null) {
+                try {
+                    java.nio.file.Files.deleteIfExists(tempWav);
+                } catch (Exception ignored) {}
+            }
+        }
+        return null;
     }
 
     @Transactional

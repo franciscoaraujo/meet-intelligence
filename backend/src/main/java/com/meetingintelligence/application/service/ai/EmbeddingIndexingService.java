@@ -31,7 +31,6 @@ public class EmbeddingIndexingService {
 
             MeetingEmbedding embedding = MeetingEmbedding.builder()
                     .meeting(meeting)
-                    .chunk(chunk)
                     .embedding(new PGvector(vector).toString())
                     .textPreview(chunk.getTextContent())
                     .startTimeMs(chunk.getStartTimeMs())
