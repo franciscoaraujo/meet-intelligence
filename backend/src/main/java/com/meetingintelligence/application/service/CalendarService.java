@@ -122,13 +122,9 @@ public class CalendarService {
     }
 
     private List<CalendarEventDto> fetchFromGoogleCalendarApi(String accessToken, UUID organizationId, User hostUser) throws Exception {
-        // Janela ampla (24 meses atrás até eventos futuros) para evitar bloqueio caso o relógio local do SO esteja adiantado
-        String timeMin = URLEncoder.encode(
-                OffsetDateTime.now(ZoneOffset.UTC).minusMonths(24).format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
-                StandardCharsets.UTF_8
-        );
+        String timeMin = "2025-01-01T00:00:00Z";
         String url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=" + timeMin
-                + "&singleEvents=true&orderBy=startTime&maxResults=100";
+                + "&singleEvents=true&orderBy=startTime&maxResults=250";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
