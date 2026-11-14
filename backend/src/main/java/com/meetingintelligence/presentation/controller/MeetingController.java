@@ -1,0 +1,72 @@
+package com.meetingintelligence.presentation.controller;
+
+import com.meetingintelligence.application.dto.CreateMeetingRequest;
+import com.meetingintelligence.application.dto.MeetingResponse;
+import com.meetingintelligence.application.service.MeetingService;
+import com.meetingintelligence.domain.enums.MeetingStatus;
+import com.meetingintelligence.infrastructure.security.UserPrincipal;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.tags.Tag;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.web.PageableDefault;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.UUID;
+
+@RestController
+@RequestMapping("/api/v1/meetings")
+@RequiredArgsConstructor
+@Tag(name = "Reuniões", description = "Gerenciamento e ciclo de vida das reuniões")
+public class MeetingController {
+
+    private final MeetingService meetingService;
+
+    @PostMapping
+    @Operation(summary = "Criar reunião", description = "Registra uma nova reunião vinculada à organização do usuário")
+    public ResponseEntity<MeetingResponse> createMeeting(
+            @Valid @RequestBody CreateMeetingRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
+        MeetingResponse response = meetingService.createMeeting(request, currentUser);
+        return ResponseEntity.status(HttpStatus.CREATED).body(response);
+    }
+
+    @GetMapping
+    @Operation(summary = "Listar reuniões da organização", description = "Retorna reuniões paginadas")
+    public ResponseEntity<Page<MeetingResponse>> listMeetings(
+            @AuthenticationPrincipal UserPrincipal currentUser,
+            @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
+        Page<MeetingResponse> page = meetingService.listMeetings(currentUser.getOrganizationId(), pageable);
+        return ResponseEntity.ok(page);
+    }
+
+    @GetMapping("/{id}")
+    @Operation(summary = "Obter reunião por ID", description = "Retorna os detalhes de uma reunião específica")
+    public ResponseEntity<MeetingResponse> getMeetingById(@PathVariable UUID id) {
+        MeetingResponse response = meetingService.getMeetingById(id);
+        return ResponseEntity.ok(response);
+    }
+
+    @PatchMapping("/{id}/status")
+    @Operation(summary = "Atualizar status da reunião", description = "Modifica o status (ex: IN_PROGRESS, COMPLETED)")
+    public ResponseEntity<MeetingResponse> updateStatus(
+            @PathVariable UUID id,
+            @RequestParam MeetingStatus status) {
+        MeetingResponse response = meetingService.updateMeetingStatus(id, status);
+        return ResponseEntity.ok(response);
+    }
+
+    @DeleteMapping("/{id}")
+    @Operation(summary = "Excluir reunião definitivamente (LGPD)", description = "Exclusão em cascata de gravações, transcrições e análises")
+    public ResponseEntity<Void> deleteMeeting(@PathVariable UUID id) {
+        meetingService.deleteMeeting(id);
+        return ResponseEntity.noContent().build();
+    }
+}
+
