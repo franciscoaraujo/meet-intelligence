@@ -21,8 +21,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestTemplate;
 
-import java.net.URLEncoder;
-import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
@@ -66,11 +64,10 @@ public class CalendarService {
 
     @Transactional
     public List<CalendarEventDto> listUpcomingEvents(UUID userId, UUID organizationId) {
-        log.info("Buscando APENAS reuniões reais agendadas no Google Meet para usuário {} / organização {}", userId, organizationId);
+        log.info("Sincronizando reuniões futuras agendadas no Google Calendar para usuário {} / organização {}", userId, organizationId);
 
         List<CalendarEventDto> result = new ArrayList<>();
         Set<String> seenEventIds = new HashSet<>();
-        Set<String> seenMeetLinks = new HashSet<>();
 
         // 1. Consulta a API real do Google Calendar se o usuário possuir token OAuth conectado
         Optional<User> userOpt = userRepository.findById(userId);
@@ -81,31 +78,27 @@ public class CalendarService {
                 for (CalendarEventDto evt : googleEvents) {
                     result.add(evt);
                     if (evt.getId() != null) seenEventIds.add(evt.getId());
-                    if (evt.getGoogleMeetLink() != null) seenMeetLinks.add(evt.getGoogleMeetLink());
                 }
             } catch (Exception e) {
                 log.warn("Não foi possível consultar a API do Google Calendar com o token atual: {}", e.getMessage());
             }
         }
 
-        // 2. Inclui apenas reuniões reais futuras agendadas (SCHEDULED) no banco da organização que possuam link do Google Meet
+        // 2. Inclui reuniões futuras agendadas (SCHEDULED) no banco da organização
         OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         if (organizationId != null) {
             List<Meeting> scheduledMeetings = meetingRepository.findByOrganizationIdAndStatusOrderByScheduledStartAsc(
                     organizationId, MeetingStatus.SCHEDULED
             );
             for (Meeting m : scheduledMeetings) {
-                if (m.getGoogleMeetLink() == null || !m.getGoogleMeetLink().contains("meet.google.com")) {
-                    continue; // Filtra estritamente reuniões agendadas no Google Meet
-                }
                 if (m.getScheduledEnd() != null && m.getScheduledEnd().isBefore(now)) {
-                    continue; // Ignora reuniões que já aconteceram no passado
+                    continue; // Ignora reuniões que já terminaram no passado
                 }
                 String calId = m.getGoogleCalendarEventId() != null && !m.getGoogleCalendarEventId().isBlank()
                         ? m.getGoogleCalendarEventId()
                         : m.getId().toString();
 
-                if (seenEventIds.contains(calId) || seenMeetLinks.contains(m.getGoogleMeetLink())) {
+                if (seenEventIds.contains(calId)) {
                     continue;
                 }
 
@@ -117,11 +110,12 @@ public class CalendarService {
                         .startTime(m.getScheduledStart() != null ? m.getScheduledStart() : m.getCreatedAt())
                         .endTime(m.getScheduledEnd() != null ? m.getScheduledEnd() : m.getCreatedAt().plusHours(1))
                         .googleMeetLink(m.getGoogleMeetLink())
-                        .hasMeetLink(true)
+                        .hasMeetLink(m.getGoogleMeetLink() != null && m.getGoogleMeetLink().contains("meet.google.com"))
                         .build());
             }
         }
 
+        result.sort(Comparator.comparing(CalendarEventDto::getStartTime));
         return result;
     }
 
@@ -136,7 +130,7 @@ public class CalendarService {
         HttpEntity<Void> entity = new HttpEntity<>(headers);
 
         ResponseEntity<String> response = restTemplate.exchange(url, HttpMethod.GET, entity, String.class);
-        List<CalendarEventDto> meetEvents = new ArrayList<>();
+        List<CalendarEventDto> upcomingEvents = new ArrayList<>();
 
         if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
             JsonNode root = objectMapper.readTree(response.getBody());
@@ -144,22 +138,21 @@ public class CalendarService {
             Organization org = organizationId != null ? organizationRepository.findById(organizationId).orElse(null) : null;
 
             if (items.isArray()) {
-                log.info("Google Calendar API retornou {} eventos totais na agenda.", items.size());
+                // Primeiro identifica quais horários já possuem convite oficial com link do Google Meet
+                Set<OffsetDateTime> startTimesWithMeetLink = new HashSet<>();
+                for (JsonNode item : items) {
+                    String meetLink = extractGoogleMeetLink(item);
+                    OffsetDateTime st = parseGoogleDateTime(item.path("start"));
+                    if (meetLink != null && !meetLink.isBlank() && st != null) {
+                        startTimesWithMeetLink.add(st);
+                    }
+                }
+
                 for (JsonNode item : items) {
                     String status = item.path("status").asText("");
                     if ("cancelled".equalsIgnoreCase(status)) {
                         continue;
                     }
-
-                    String meetLink = extractGoogleMeetLink(item);
-                    // Regra estrita: retorna APENAS eventos agendados que possuem link do Google Meet
-                    if (meetLink == null || meetLink.isBlank()) {
-                        continue;
-                    }
-
-                    String eventId = item.path("id").asText();
-                    String summary = item.path("summary").asText("Reunião Agendada no Google Meet");
-                    String description = item.path("description").asText(null);
 
                     OffsetDateTime startTime = parseGoogleDateTime(item.path("start"));
                     OffsetDateTime endTime = parseGoogleDateTime(item.path("end"));
@@ -170,6 +163,19 @@ public class CalendarService {
                     if (endTime.isBefore(now)) {
                         continue;
                     }
+
+                    String meetLink = extractGoogleMeetLink(item);
+                    String description = item.path("description").asText("");
+
+                    // Se houver no mesmo horário (ex: 13h) tanto o convite oficial com link do Meet quanto um lembrete pessoal sem link, ignora apenas o lembrete duplicado daquele mesmo horário
+                    if ((meetLink == null || meetLink.isBlank())
+                            && startTimesWithMeetLink.contains(startTime)
+                            && description.toLowerCase().contains("lembrete")) {
+                        continue;
+                    }
+
+                    String eventId = item.path("id").asText();
+                    String summary = item.path("summary").asText("Reunião Agendada");
 
                     List<String> attendees = new ArrayList<>();
                     JsonNode attendeesNode = item.path("attendees");
@@ -187,7 +193,6 @@ public class CalendarService {
                         if (existingOpt.isPresent()) {
                             existingMeetingId = existingOpt.get().getId();
                         } else {
-                            // Sincroniza o evento agendado real do Google Meet no banco da organização
                             Meeting syncedMeeting = meetingRepository.save(Meeting.builder()
                                     .organization(org)
                                     .createdBy(hostUser)
@@ -205,7 +210,7 @@ public class CalendarService {
                         }
                     }
 
-                    meetEvents.add(CalendarEventDto.builder()
+                    upcomingEvents.add(CalendarEventDto.builder()
                             .id(eventId)
                             .meetingId(existingMeetingId)
                             .title(summary)
@@ -213,27 +218,22 @@ public class CalendarService {
                             .startTime(startTime)
                             .endTime(endTime)
                             .googleMeetLink(meetLink)
-                            .hasMeetLink(true)
+                            .hasMeetLink(meetLink != null && !meetLink.isBlank())
                             .attendees(attendees)
                             .build());
                 }
-                // Ordena da reunião mais recente/próxima para a mais antiga
-                meetEvents.sort(Comparator.comparing(CalendarEventDto::getStartTime).reversed());
-                log.info("Foram filtradas {} reuniões reais com link do Google Meet.", meetEvents.size());
             }
         }
 
-        return meetEvents;
+        return upcomingEvents;
     }
 
     private String extractGoogleMeetLink(JsonNode item) {
-        // 1. Campo oficial hangoutLink
         String hangoutLink = item.path("hangoutLink").asText(null);
         if (hangoutLink != null && hangoutLink.contains("meet.google.com")) {
             return hangoutLink;
         }
 
-        // 2. Campo conferenceData.entryPoints
         JsonNode entryPoints = item.path("conferenceData").path("entryPoints");
         if (entryPoints.isArray()) {
             for (JsonNode ep : entryPoints) {
@@ -244,7 +244,6 @@ public class CalendarService {
             }
         }
 
-        // 3. Verifica location ou description por link do Meet
         String location = item.path("location").asText("");
         Matcher locMatcher = MEET_LINK_PATTERN.matcher(location);
         if (locMatcher.find()) {
