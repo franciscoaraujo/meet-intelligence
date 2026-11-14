@@ -49,15 +49,19 @@ export const LiveMeetingPage: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Estados de captura de voz ao vivo (Web Speech API) e envio direto de falas
+  // Estados de captura de voz ao vivo (Web Speech API + Áudio da Guia do Meet) e envio direto de falas
   const [interimTranscript, setInterimTranscript] = useState('');
   const [micStatus, setMicStatus] = useState<string>('');
+  const [tabAudioActive, setTabAudioActive] = useState<boolean>(false);
   const [manualSpeechInput, setManualSpeechInput] = useState('');
-  const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
+  const [speakerRole, setSpeakerRole] = useState('Entrevistador Técnico');
+  const speakerRoleRef = useRef<string>('Entrevistador Técnico');
   const recognitionRef = useRef<any>(null);
   const isRecordingRef = useRef<boolean>(false);
   const recordingSecondsRef = useRef<number>(0);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const tabStreamRef = useRef<MediaStream | null>(null);
+  const tabIntervalRef = useRef<number | null>(null);
   const interimRef = useRef<string>('');
 
   // Tabs do Painel Central
@@ -175,12 +179,121 @@ export const LiveMeetingPage: React.FC = () => {
     }
   };
 
+  const changeSpeakerRole = (role: string) => {
+    speakerRoleRef.current = role;
+    setSpeakerRole(role);
+  };
+
+  const blobToBase64 = (blob: Blob): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const res = reader.result as string;
+        const base64 = res.includes(',') ? res.split(',')[1] : res;
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  };
+
+  const startTabAudioCapture = async () => {
+    if (!id) return;
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({
+        video: true,
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: true,
+        } as any,
+      });
+
+      tabStreamRef.current = displayStream;
+      const audioTracks = displayStream.getAudioTracks();
+
+      if (audioTracks.length === 0) {
+        alert(
+          'Atenção: Você precisa marcar a caixinha "Compartilhar também o áudio da guia" (Share tab audio) ao selecionar a aba do Google Meet para capturar a voz do entrevistador.'
+        );
+      } else {
+        setTabAudioActive(true);
+        const audioOnlyStream = new MediaStream(audioTracks);
+        const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+          ? 'audio/webm;codecs=opus'
+          : 'audio/webm';
+
+        const recordChunk = () => {
+          if (!tabStreamRef.current || audioOnlyStream.getAudioTracks()[0]?.readyState !== 'live') {
+            setTabAudioActive(false);
+            return;
+          }
+          try {
+            const recorder = new MediaRecorder(audioOnlyStream, { mimeType });
+            const chunks: BlobPart[] = [];
+            recorder.ondataavailable = (e) => {
+              if (e.data && e.data.size > 0) chunks.push(e.data);
+            };
+            recorder.onstop = async () => {
+              if (chunks.length > 0) {
+                const blob = new Blob(chunks, { type: mimeType });
+                if (blob.size > 2000) {
+                  try {
+                    const base64Audio = await blobToBase64(blob);
+                    const res = await api.post(`/meetings/${id}/transcripts/chunk`, {
+                      base64Audio,
+                      mimeType: 'audio/webm',
+                    });
+                    if (Array.isArray(res.data) && res.data.length > 0) {
+                      setTranscripts((prev) => {
+                        const next = [...prev];
+                        for (const seg of res.data) {
+                          if (!next.some((s) => s.id === seg.id)) next.push(seg);
+                        }
+                        return next;
+                      });
+                    }
+                  } catch (err) {
+                    console.warn('Erro ao enviar chunk de áudio da guia:', err);
+                  }
+                }
+              }
+            };
+            recorder.start();
+            setTimeout(() => {
+              if (recorder.state === 'recording') recorder.stop();
+            }, 6000);
+          } catch (e) {
+            console.warn('Erro no MediaRecorder da guia:', e);
+          }
+        };
+
+        recordChunk();
+        tabIntervalRef.current = window.setInterval(recordChunk, 6200);
+      }
+
+      displayStream.getVideoTracks()[0].onended = () => {
+        setTabAudioActive(false);
+        if (tabIntervalRef.current) clearInterval(tabIntervalRef.current);
+      };
+
+      // Garante que o SpeechRecognition do microfone continue ativo após fechar o modal de compartilhamento
+      if (isRecordingRef.current) {
+        setTimeout(() => startBrowserSpeechRecognition(), 300);
+      }
+    } catch (err) {
+      console.warn('Compartilhamento de guia cancelado:', err);
+      if (isRecordingRef.current) {
+        setTimeout(() => startBrowserSpeechRecognition(), 300);
+      }
+    }
+  };
   const handleManualSpeechSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualSpeechInput.trim()) return;
     const text = manualSpeechInput;
     setManualSpeechInput('');
-    await sendLiveSpeechSegment(text, speakerRole);
+    await sendLiveSpeechSegment(text, speakerRoleRef.current);
   };
 
   const startBrowserSpeechRecognition = () => {
@@ -206,7 +319,9 @@ export const LiveMeetingPage: React.FC = () => {
       recognition.maxAlternatives = 1;
 
       recognition.onstart = () => {
-        setMicStatus('Microfone ativo — escutando sua voz em português...');
+        setMicStatus(
+          'Escuta ao vivo ativa (captura sua voz e o áudio ambiente das caixas de som)...'
+        );
       };
 
       recognition.onresult = (event: any) => {
@@ -216,7 +331,7 @@ export const LiveMeetingPage: React.FC = () => {
           if (event.results[i].isFinal) {
             interimRef.current = '';
             setInterimTranscript('');
-            sendLiveSpeechSegment(transcriptPiece, speakerRole || 'Francisco Araújo');
+            sendLiveSpeechSegment(transcriptPiece, speakerRoleRef.current);
           } else {
             interim += transcriptPiece;
           }
@@ -232,7 +347,7 @@ export const LiveMeetingPage: React.FC = () => {
         if (event.error === 'not-allowed') {
           setMicStatus('Permissão de microfone negada no navegador. Libere o cadeado ao lado da URL.');
         } else if (event.error === 'no-speech') {
-          setMicStatus('Microfone ativo — aguardando você falar...');
+          setMicStatus('Escuta ativa — aguardando fala do entrevistador ou sua...');
         }
       };
 
@@ -242,7 +357,7 @@ export const LiveMeetingPage: React.FC = () => {
           const pending = interimRef.current.trim();
           interimRef.current = '';
           setInterimTranscript('');
-          sendLiveSpeechSegment(pending, speakerRole || 'Francisco Araújo');
+          sendLiveSpeechSegment(pending, speakerRoleRef.current);
         }
         if (isRecordingRef.current) {
           setTimeout(() => {
@@ -265,9 +380,15 @@ export const LiveMeetingPage: React.FC = () => {
   const toggleRecording = async () => {
     if (!isRecording) {
       try {
-        // 1. Garante permissão de microfone do navegador primeiro
+        // Desativa echoCancellation para que o microfone também capte a voz do entrevistador saindo na caixa de som do PC
         if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          const micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              echoCancellation: false,
+              noiseSuppression: false,
+              autoGainControl: true,
+            },
+          });
           micStreamRef.current = micStream;
         }
       } catch (micErr) {
@@ -286,8 +407,17 @@ export const LiveMeetingPage: React.FC = () => {
   const stopRecording = async () => {
     isRecordingRef.current = false;
     setIsRecording(false);
+    setTabAudioActive(false);
     setInterimTranscript('');
     setMicStatus('');
+    if (tabIntervalRef.current) {
+      clearInterval(tabIntervalRef.current);
+      tabIntervalRef.current = null;
+    }
+    if (tabStreamRef.current) {
+      tabStreamRef.current.getTracks().forEach((t) => t.stop());
+      tabStreamRef.current = null;
+    }
     if (recognitionRef.current) {
       try {
         recognitionRef.current.onend = null;
@@ -488,6 +618,19 @@ export const LiveMeetingPage: React.FC = () => {
           </button>
 
           <button
+            onClick={startTabAudioCapture}
+            className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${
+              tabAudioActive ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
+            }`}
+            title="Compartilhar o áudio interno da aba do Google Meet para capturar a voz do entrevistador mesmo usando fone de ouvido"
+          >
+            <Volume2 className="w-3.5 h-3.5" />
+            <span>
+              {tabAudioActive ? 'Áudio da Guia Meet Conectado' : 'Capturar Áudio da Guia Meet'}
+            </span>
+          </button>
+
+          <button
             onClick={triggerAiAnalysis}
             disabled={analyzing}
             className="md-btn-tonal !py-1.5 !px-3.5 !text-xs"
@@ -546,6 +689,37 @@ export const LiveMeetingPage: React.FC = () => {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-8 pr-3 py-1 bg-white border border-[#c4c7c5] rounded-full text-xs text-[#1f1f1f] placeholder-[#747775] focus:outline-none focus:border-[#0b57d0]"
               />
+            </div>
+          </div>
+
+          {/* Seletor Rápido de Quem Está Falando Agora */}
+          <div className="px-3.5 py-2 border-b border-[#e0e3e7] bg-[#edf2fc]/60 flex items-center justify-between gap-2 shrink-0">
+            <span className="text-[11px] font-medium text-[#444746]">
+              Atribuir voz capturada a:
+            </span>
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => changeSpeakerRole('Entrevistador Técnico')}
+                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                  speakerRole === 'Entrevistador Técnico'
+                    ? 'bg-[#0b57d0] text-white shadow-2xs'
+                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
+                }`}
+              >
+                🎤 Entrevistador
+              </button>
+              <button
+                type="button"
+                onClick={() => changeSpeakerRole('Francisco Araújo')}
+                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                  speakerRole === 'Francisco Araújo'
+                    ? 'bg-[#0b57d0] text-white shadow-2xs'
+                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
+                }`}
+              >
+                👤 Francisco Araújo (Você)
+              </button>
             </div>
           </div>
 
