@@ -39,7 +39,8 @@ export const AppLayout: React.FC = () => {
     { label: 'Atas e Relatórios', path: '/summaries', icon: ClipboardList },
     { label: 'Perfis de Análise', path: '/ai-profiles', icon: Sliders },
     { label: 'Configurações & Planos', path: '/settings', icon: Settings },
-    { label: 'Por que Meet Intelligence?', path: '/landing', icon: Sparkles },
+    { label: 'Landing 1 (SaaS vs Mercado)', path: '/landing', icon: Sparkles },
+    { label: 'Landing 2 (Sob Demanda B2B)', path: '/landing_2', icon: Building2 },
   ];
 
   return (

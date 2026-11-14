@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import {
   Video,
   ShieldCheck,
@@ -45,6 +45,32 @@ export const LandingPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#f8fafd] text-[#1f1f1f] overflow-x-hidden selection:bg-[#d3e3fd] selection:text-[#041e49]">
+      {/* Barra Superior de Alternância entre as 2 Propostas de Landing Page */}
+      <div className="bg-[#041e49] text-white px-6 py-2 text-xs flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="px-2 py-0.5 rounded bg-[#0b57d0] text-[#d3e3fd] font-semibold text-[10px] uppercase">
+            Modo de Avaliação Comercial
+          </span>
+          <span className="text-[#d3e3fd]">
+            Compare os dois posicionamentos de venda do produto:
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link
+            to="/landing"
+            className="px-3 py-1 rounded-full bg-[#c2e7ff] text-[#001d35] font-semibold"
+          >
+            Versão 1: Produto SaaS vs. Concorrentes (/landing)
+          </Link>
+          <Link
+            to="/landing_2"
+            className="px-3 py-1 rounded-full bg-white/10 hover:bg-white/20 text-[#d3e3fd] transition-colors"
+          >
+            Versão 2: Solução Sob Demanda & White-Label (/landing_2)
+          </Link>
+        </div>
+      </div>
+
       {/* Top Navbar Fixa — Padrão Google Workspace Enterprise */}
       <header className="sticky top-0 z-50 h-16 px-6 lg:px-12 bg-white/90 backdrop-blur-md border-b border-[#e0e3e7] flex items-center justify-between">
         <div className="flex items-center gap-3">
@@ -679,3 +705,4 @@ export const LandingPage: React.FC = () => {
     </div>
   );
 };
+

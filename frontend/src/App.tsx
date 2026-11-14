@@ -12,6 +12,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './pages/LoginPage';
 import { LandingPage } from './pages/LandingPage';
+import { LandingCustomPage } from './pages/LandingCustomPage';
 import { DashboardPage } from './pages/DashboardPage';
 import { CalendarPage } from './pages/CalendarPage';
 import { MeetingsPage } from './pages/MeetingsPage';
@@ -36,8 +37,9 @@ export const App: React.FC = () => {
     <BrowserRouter>
       <AuthProvider>
         <Routes>
-          {/* Rotas públicas (Landing Page comercial + Autenticação) */}
+          {/* Rotas públicas (Landing Pages comerciais + Autenticação) */}
           <Route path="/landing" element={<LandingPage />} />
+          <Route path="/landing_2" element={<LandingCustomPage />} />
           <Route path="/login" element={<LoginPage />} />
 
           {/* Rotas autenticadas dentro do AppLayout estilo Google Workspace */}
