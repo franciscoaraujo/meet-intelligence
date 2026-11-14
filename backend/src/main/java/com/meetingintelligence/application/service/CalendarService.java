@@ -88,7 +88,8 @@ public class CalendarService {
             }
         }
 
-        // 2. Inclui apenas reuniões reais já agendadas (SCHEDULED) no banco da organização que possuam link do Google Meet
+        // 2. Inclui apenas reuniões reais futuras agendadas (SCHEDULED) no banco da organização que possuam link do Google Meet
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
         if (organizationId != null) {
             List<Meeting> scheduledMeetings = meetingRepository.findByOrganizationIdAndStatusOrderByScheduledStartAsc(
                     organizationId, MeetingStatus.SCHEDULED
@@ -96,6 +97,9 @@ public class CalendarService {
             for (Meeting m : scheduledMeetings) {
                 if (m.getGoogleMeetLink() == null || !m.getGoogleMeetLink().contains("meet.google.com")) {
                     continue; // Filtra estritamente reuniões agendadas no Google Meet
+                }
+                if (m.getScheduledEnd() != null && m.getScheduledEnd().isBefore(now)) {
+                    continue; // Ignora reuniões que já aconteceram no passado
                 }
                 String calId = m.getGoogleCalendarEventId() != null && !m.getGoogleCalendarEventId().isBlank()
                         ? m.getGoogleCalendarEventId()
@@ -122,9 +126,10 @@ public class CalendarService {
     }
 
     private List<CalendarEventDto> fetchFromGoogleCalendarApi(String accessToken, UUID organizationId, User hostUser) throws Exception {
-        String timeMin = "2025-01-01T00:00:00Z";
+        OffsetDateTime now = OffsetDateTime.now(ZoneOffset.UTC);
+        String timeMin = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
         String url = "https://www.googleapis.com/calendar/v3/calendars/primary/events?timeMin=" + timeMin
-                + "&singleEvents=true&orderBy=startTime&maxResults=250";
+                + "&singleEvents=true&orderBy=startTime&maxResults=50";
 
         HttpHeaders headers = new HttpHeaders();
         headers.setBearerAuth(accessToken);
@@ -160,6 +165,11 @@ public class CalendarService {
                     OffsetDateTime endTime = parseGoogleDateTime(item.path("end"));
                     if (startTime == null) continue;
                     if (endTime == null) endTime = startTime.plusHours(1);
+
+                    // Ignora reuniões que já terminaram
+                    if (endTime.isBefore(now)) {
+                        continue;
+                    }
 
                     List<String> attendees = new ArrayList<>();
                     JsonNode attendeesNode = item.path("attendees");
