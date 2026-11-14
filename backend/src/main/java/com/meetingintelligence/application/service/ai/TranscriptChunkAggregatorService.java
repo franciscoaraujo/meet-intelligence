@@ -29,7 +29,7 @@ public class TranscriptChunkAggregatorService {
     private final ConcurrentHashMap<UUID, Long> chunkStartMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Integer> wordCountMap = new ConcurrentHashMap<>();
 
-    private static final int MIN_WORDS_PER_CHUNK = 25;
+    private static final int MIN_WORDS_PER_CHUNK = 12;
     private static final int MAX_WORDS_PER_CHUNK = 250;
 
     @Transactional
@@ -59,6 +59,42 @@ public class TranscriptChunkAggregatorService {
         UUID meetingId = meeting.getId();
         if (bufferMap.containsKey(meetingId) && bufferMap.get(meetingId).length() > 0) {
             flushChunk(meeting, System.currentTimeMillis());
+            return;
+        }
+
+        // Caso o buffer em memória esteja vazio, verifica se existem chunks pendentes de processamento pela IA
+        List<TranscriptChunk> existingChunks = chunkRepository.findByMeetingIdOrderByChunkIndexAsc(meetingId);
+        List<TranscriptChunk> unprocessed = existingChunks.stream()
+                .filter(c -> !c.isProcessedByAi())
+                .toList();
+
+        if (!unprocessed.isEmpty()) {
+            // Processa os últimos blocos pendentes (até 3 blocos mais recentes para resposta rápida)
+            int startIdx = Math.max(0, unprocessed.size() - 3);
+            for (int i = startIdx; i < unprocessed.size(); i++) {
+                TranscriptChunk pendingChunk = unprocessed.get(i);
+                embeddingIndexingService.indexChunkAsync(meeting, pendingChunk);
+                insightExtractorService.processChunkAsync(meeting, pendingChunk);
+            }
+            return;
+        }
+
+        // Caso não existam chunks ou todos já tenham sido marcados, consolida os segmentos recentes da transcrição
+        List<TranscriptSegment> segments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        if (!segments.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            int startSeg = Math.max(0, segments.size() - 10);
+            long startMs = segments.get(startSeg).getStartTimeMs();
+            long endMs = segments.get(segments.size() - 1).getEndTimeMs();
+            for (int i = startSeg; i < segments.size(); i++) {
+                TranscriptSegment s = segments.get(i);
+                String spk = s.getSpeakerLabel() != null ? "[" + s.getSpeakerLabel() + "]: " : "";
+                String txt = s.getCorrectedText() != null ? s.getCorrectedText() : s.getOriginalText();
+                sb.append(spk).append(txt).append("\n");
+            }
+            bufferMap.put(meetingId, sb);
+            chunkStartMap.put(meetingId, startMs);
+            flushChunk(meeting, endMs);
         }
     }
 

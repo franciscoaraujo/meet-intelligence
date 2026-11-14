@@ -1,9 +1,13 @@
 package com.meetingintelligence.domain.entity;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.meetingintelligence.domain.enums.MeetingType;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.OffsetDateTime;
 import java.util.UUID;
@@ -15,12 +19,14 @@ import java.util.UUID;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class AIProfile {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    @JsonIgnore
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "organization_id")
     private Organization organization;
@@ -35,6 +41,7 @@ public class AIProfile {
     @Column(name = "system_prompt_override", columnDefinition = "TEXT")
     private String systemPromptOverride;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "focus_categories", columnDefinition = "JSONB")
     private String focusCategories;
 

@@ -150,51 +150,178 @@ public class GeminiLlmProvider implements LLMProvider {
     }
 
     private LLMResponse generateMockResponse(LLMRequest request, long startTime) {
-        long latency = Math.max(System.currentTimeMillis() - startTime, 150L);
+        long latency = Math.max(System.currentTimeMillis() - startTime, 120L);
+        String userPrompt = request.getUserPrompt() != null ? request.getUserPrompt() : "";
 
-        String jsonContent = """
-        {
-          "summary_delta": "Discussão estruturada sobre arquitetura de sistemas distribuídos e implementação de pipeline de transcrição com IA.",
-          "insights": [
-            {
-              "category": "DECISION",
-              "title": "Adoção do pgvector para RAG Híbrido",
-              "description": "Definido o uso do PostgreSQL com extensão pgvector e índice HNSW para armazenamento e busca por proximidade de cosseno.",
-              "speaker_reference": "Mariana Costa",
-              "confidence": 0.98
-            },
-            {
-              "category": "TASK",
-              "title": "Configurar Transactional Outbox Pattern",
-              "description": "Garantir entrega de eventos com garantia at-least-once no RabbitMQ para desacoplar a transcrição do processamento de IA.",
-              "assignee_name": "Carlos Silva",
-              "priority": "HIGH",
-              "confidence": 0.95
-            },
-            {
-              "category": "QUESTION",
-              "title": "Quais modelos de LLM suportam JSON mode nativo?",
-              "description": "Validado que Gemini 1.5 Flash e GPT-4o-mini fornecem retorno estruturado em JSON com conformidade estrita de schema.",
-              "speaker_reference": "Carlos Silva",
-              "confidence": 0.96
-            }
-          ],
-          "key_topics": ["pgvector", "RabbitMQ Outbox", "LLM JSON Mode", "Resiliência"],
-          "sentiment": "PRODUTIVO",
-          "meeting_type_detected": "TECHNICAL"
+        if (request.isJsonMode()) {
+            String jsonContent = buildContextualJsonAnalysis(userPrompt);
+            return LLMResponse.builder()
+                    .providerName(getProviderName())
+                    .modelName(model)
+                    .content(jsonContent)
+                    .promptTokens(320)
+                    .completionTokens(210)
+                    .totalTokens(530)
+                    .estimatedCostUsd(BigDecimal.valueOf(0.000087))
+                    .latencyMs(latency)
+                    .build();
+        } else {
+            String ragReply = buildContextualRagAnswer(userPrompt);
+            return LLMResponse.builder()
+                    .providerName(getProviderName())
+                    .modelName(model)
+                    .content(ragReply)
+                    .promptTokens(280)
+                    .completionTokens(160)
+                    .totalTokens(440)
+                    .estimatedCostUsd(BigDecimal.valueOf(0.000065))
+                    .latencyMs(latency)
+                    .build();
         }
-        """;
+    }
 
-        return LLMResponse.builder()
-                .providerName(getProviderName())
-                .modelName(model)
-                .content(request.isJsonMode() ? jsonContent : "Análise da reunião processada com sucesso.")
-                .promptTokens(320)
-                .completionTokens(210)
-                .totalTokens(530)
-                .estimatedCostUsd(BigDecimal.valueOf(0.000087))
-                .latencyMs(latency)
-                .build();
+    private String buildContextualJsonAnalysis(String userPrompt) {
+        try {
+            String chunkText = "";
+            int startTag = userPrompt.indexOf("<transcript_chunk>");
+            int endTag = userPrompt.indexOf("</transcript_chunk>");
+            if (startTag != -1 && endTag != -1 && endTag > startTag) {
+                chunkText = userPrompt.substring(startTag + "<transcript_chunk>".length(), endTag).trim();
+            }
+            if (chunkText.isBlank()) {
+                chunkText = "Participantes iniciaram a comunicação na sala ao vivo.";
+            }
+
+            String[] lines = chunkText.split("\\r?\\n");
+            List<Map<String, Object>> insights = new java.util.ArrayList<>();
+            List<String> summaryParts = new java.util.ArrayList<>();
+
+            for (String rawLine : lines) {
+                String line = rawLine.trim();
+                if (line.isBlank()) continue;
+
+                String speaker = "Participante";
+                String speech = line;
+                if (line.startsWith("[") && line.contains("]:")) {
+                    int closeBracket = line.indexOf("]:");
+                    speaker = line.substring(1, closeBracket).trim();
+                    speech = line.substring(closeBracket + 2).trim();
+                }
+
+                if (speech.isBlank()) continue;
+                summaryParts.add(speaker + ": \"" + (speech.length() > 120 ? speech.substring(0, 120) + "..." : speech) + "\"");
+
+                String lower = speech.toLowerCase();
+                boolean isQuestion = speech.contains("?")
+                        || lower.startsWith("como ")
+                        || lower.startsWith("qual ")
+                        || lower.startsWith("quais ")
+                        || lower.startsWith("por que ")
+                        || lower.startsWith("o que ")
+                        || lower.contains("fale sobre")
+                        || lower.contains("me conte")
+                        || lower.contains("explique")
+                        || lower.contains("pode falar");
+
+                boolean isTask = lower.contains("tarefa")
+                        || lower.contains("precisamos ")
+                        || lower.contains("vou enviar")
+                        || lower.contains("fazer ")
+                        || lower.contains("implementar")
+                        || lower.contains("configurar")
+                        || lower.contains("entregar")
+                        || lower.contains("prazo")
+                        || lower.contains("amanhã");
+
+                boolean isDecision = lower.contains("decidimos")
+                        || lower.contains("definimos")
+                        || lower.contains("vamos usar")
+                        || lower.contains("escolhemos")
+                        || lower.contains("combinado")
+                        || lower.contains("aprovado")
+                        || lower.contains("fechado");
+
+                if (isQuestion) {
+                    Map<String, Object> qInsight = new HashMap<>();
+                    qInsight.put("category", "QUESTION");
+                    qInsight.put("title", "Pergunta de " + speaker);
+                    qInsight.put("description", speech);
+                    qInsight.put("speaker_reference", speaker);
+                    qInsight.put("confidence", 0.97);
+                    insights.add(qInsight);
+                } else if (isDecision) {
+                    Map<String, Object> dInsight = new HashMap<>();
+                    dInsight.put("category", "DECISION");
+                    dInsight.put("title", "Decisão registrada por " + speaker);
+                    dInsight.put("description", speech);
+                    dInsight.put("speaker_reference", speaker);
+                    dInsight.put("confidence", 0.96);
+                    insights.add(dInsight);
+                } else if (isTask) {
+                    Map<String, Object> tInsight = new HashMap<>();
+                    tInsight.put("category", "TASK");
+                    tInsight.put("title", "Ação identificada (" + speaker + ")");
+                    tInsight.put("description", speech);
+                    tInsight.put("speaker_reference", speaker);
+                    tInsight.put("assignee_name", speaker);
+                    tInsight.put("priority", "HIGH");
+                    tInsight.put("confidence", 0.95);
+                    insights.add(tInsight);
+                } else {
+                    Map<String, Object> cInsight = new HashMap<>();
+                    cInsight.put("category", "CONTENT_ANALYSIS");
+                    cInsight.put("title", "Ponto destacado por " + speaker);
+                    cInsight.put("description", speech);
+                    cInsight.put("speaker_reference", speaker);
+                    cInsight.put("confidence", 0.94);
+                    insights.add(cInsight);
+                }
+            }
+
+            if (insights.isEmpty()) {
+                Map<String, Object> fallback = new HashMap<>();
+                fallback.put("category", "CONTENT_ANALYSIS");
+                fallback.put("title", "Trecho capturado na reunião");
+                fallback.put("description", chunkText);
+                fallback.put("speaker_reference", "Participante");
+                fallback.put("confidence", 0.93);
+                insights.add(fallback);
+            }
+
+            Map<String, Object> root = new HashMap<>();
+            root.put("summary_delta", String.join(" | ", summaryParts));
+            root.put("key_topics", List.of("Transcrição em Tempo Real", "Análise de Fala", "Entrevista / Reunião"));
+            root.put("insights", insights);
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            log.warn("Erro ao montar análise JSON contextual local: {}", e.getMessage());
+            return "{\"summary_delta\":\"Trecho de fala processado.\",\"key_topics\":[\"Reunião\"],\"insights\":[]}";
+        }
+    }
+
+    private String buildContextualRagAnswer(String userPrompt) {
+        String context = "";
+        int startCtx = userPrompt.indexOf("<transcript_context>");
+        int endCtx = userPrompt.indexOf("</transcript_context>");
+        if (startCtx != -1 && endCtx != -1 && endCtx > startCtx) {
+            context = userPrompt.substring(startCtx + "<transcript_context>".length(), endCtx)
+                    .replaceAll("<[^>]+>", "")
+                    .trim();
+        }
+
+        String question = "";
+        int qIdx = userPrompt.indexOf("PERGUNTA DO USUÁRIO:");
+        if (qIdx != -1) {
+            question = userPrompt.substring(qIdx + "PERGUNTA DO USUÁRIO:".length()).trim();
+        }
+
+        if (context.isBlank() || context.contains("Nenhum trecho relevante localizado")) {
+            return "Ainda não há falas suficientes registradas na transcrição desta reunião para responder a essa pergunta. Assim que você ou o entrevistador falarem, analisarei o conteúdo imediatamente.";
+        }
+
+        return "Com base no que foi falado na reunião até agora:\n\n"
+                + context
+                + (question.isBlank() ? "" : "\n\nSíntese para sua pergunta (\"" + question + "\"): Os trechos acima refletem as falas registradas em tempo real na sessão.");
     }
 }
 

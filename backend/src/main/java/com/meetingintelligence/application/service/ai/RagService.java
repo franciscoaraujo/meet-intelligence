@@ -32,6 +32,7 @@ public class RagService {
     private final AIMessageRepository messageRepository;
     private final MeetingSummaryRepository summaryRepository;
     private final MeetingEmbeddingRepository embeddingRepository;
+    private final TranscriptSegmentRepository segmentRepository;
     private final EmbeddingProvider embeddingProvider;
     private final AIOrchestrator aiOrchestrator;
     private final ObjectMapper objectMapper;
@@ -108,6 +109,34 @@ public class RagService {
                             ? emb.getTextPreview().substring(0, 80) + "..."
                             : emb.getTextPreview())
                     .build());
+        }
+
+        // Complementa com os segmentos ao vivo mais recentes da transcrição para cobertura imediata
+        List<TranscriptSegment> liveSegments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        if (!liveSegments.isEmpty()) {
+            int startSeg = Math.max(0, liveSegments.size() - 12);
+            for (int i = startSeg; i < liveSegments.size(); i++) {
+                TranscriptSegment seg = liveSegments.get(i);
+                String spk = seg.getSpeakerLabel() != null ? seg.getSpeakerLabel() : "Participante";
+                String txt = seg.getCorrectedText() != null ? seg.getCorrectedText() : seg.getOriginalText();
+                String formatted = "[" + spk + "]: " + txt;
+                if (!contextBuilder.toString().contains(txt)) {
+                    contextBuilder.append(String.format(
+                            "<transcript_snippet start_ms=\"%d\" end_ms=\"%d\">\n%s\n</transcript_snippet>\n\n",
+                            seg.getStartTimeMs() != null ? seg.getStartTimeMs() : 0,
+                            seg.getEndTimeMs() != null ? seg.getEndTimeMs() : 0,
+                            formatted
+                    ));
+                    if (citations.size() < 4) {
+                        citations.add(CitationDto.builder()
+                                .chunkId(seg.getId())
+                                .startTimeMs(seg.getStartTimeMs() != null ? seg.getStartTimeMs() : 0)
+                                .endTimeMs(seg.getEndTimeMs() != null ? seg.getEndTimeMs() : 0)
+                                .textSnippet(formatted.length() > 80 ? formatted.substring(0, 80) + "..." : formatted)
+                                .build());
+                    }
+                }
+            }
         }
 
         String systemPrompt = """
