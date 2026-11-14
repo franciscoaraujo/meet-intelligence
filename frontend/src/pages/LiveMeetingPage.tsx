@@ -669,6 +669,36 @@ export const LiveMeetingPage: React.FC = () => {
     }
   };
 
+  const askAiToAnswerQuestion = async (questionText: string) => {
+    if (!id || !questionText.trim() || chatLoading) return;
+    const query = `Responda tecnicamente à pergunta do entrevistador: ${questionText.trim()}`;
+
+    const tempUserMsg: ChatMessage = {
+      id: 'usr-' + Date.now(),
+      senderType: 'USER',
+      content: `💡 Responder pergunta: "${questionText.trim()}"`,
+      createdAt: new Date().toISOString(),
+    };
+    setChatMessages((prev) => [...prev, tempUserMsg]);
+    setChatLoading(true);
+
+    try {
+      const response = await api.post(`/meetings/${id}/chat`, { message: query });
+      const assistantMsg: ChatMessage = {
+        id: response.data.id || 'ai-' + Date.now(),
+        senderType: 'ASSISTANT',
+        content: response.data.content,
+        citations: response.data.citations || [],
+        createdAt: response.data.createdAt || new Date().toISOString(),
+      };
+      setChatMessages((prev) => [...prev, assistantMsg]);
+    } catch (error) {
+      console.error('Erro ao responder pergunta técnica:', error);
+    } finally {
+      setChatLoading(false);
+    }
+  };
+
   const jumpToTimestamp = (startTimeMs: number) => {
     setHighlightedTimeMs(startTimeMs);
     const element = document.getElementById(`segment-${startTimeMs}`);
@@ -910,6 +940,14 @@ export const LiveMeetingPage: React.FC = () => {
                       {segment.speakerLabel || 'Participante'}
                     </span>
                     <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => askAiToAnswerQuestion(segment.correctedText || segment.originalText)}
+                        className="px-2 py-0.5 rounded-full bg-[#e8f0fe] hover:bg-[#d3e3fd] text-[#0b57d0] text-[10px] font-semibold transition-colors cursor-pointer"
+                        title="Gerar resposta técnica para esta fala no Chat RAG"
+                      >
+                        💡 Responder com IA
+                      </button>
                       <span className="text-[11px] font-mono text-[#444746]">{formatMs(segment.startTimeMs)}</span>
                       {editingSegmentId !== segment.id && (
                         <button
@@ -1069,7 +1107,11 @@ export const LiveMeetingPage: React.FC = () => {
                   insights.map((ins) => (
                     <div
                       key={ins.id}
-                      className="p-4 rounded-2xl bg-white border border-[#e0e3e7] space-y-1.5 shadow-2xs"
+                      className={`p-4 rounded-2xl border space-y-1.5 shadow-2xs ${
+                        ins.category === 'QUESTION'
+                          ? 'bg-[#f0f6ff] border-[#0b57d0]/40'
+                          : 'bg-white border-[#e0e3e7]'
+                      }`}
                     >
                       <div className="flex items-center justify-between">
                         <span
@@ -1079,11 +1121,11 @@ export const LiveMeetingPage: React.FC = () => {
                               : ins.category === 'TASK'
                               ? 'bg-[#e8f0fe] text-[#1967d2]'
                               : ins.category === 'QUESTION'
-                              ? 'bg-[#fef7e0] text-[#b06000]'
+                              ? 'bg-[#0b57d0] text-white'
                               : 'bg-[#f3e8fd] text-[#6b4ea2]'
                           }`}
                         >
-                          {ins.category}
+                          {ins.category === 'QUESTION' ? '🎯 Copiloto — Resposta Técnica' : ins.category}
                         </span>
                         {ins.startTimeMs && (
                           <button
@@ -1096,7 +1138,7 @@ export const LiveMeetingPage: React.FC = () => {
                         )}
                       </div>
                       <h3 className="text-xs font-semibold text-[#1f1f1f]">{ins.title}</h3>
-                      <p className="text-xs text-[#444746] leading-relaxed">{ins.description}</p>
+                      <p className="text-xs text-[#1f1f1f] leading-relaxed whitespace-pre-line">{ins.description}</p>
                       {ins.speakerReference && (
                         <p className="text-[11px] text-[#747775]">Por: {ins.speakerReference}</p>
                       )}
@@ -1197,7 +1239,7 @@ export const LiveMeetingPage: React.FC = () => {
                       : 'bg-[#f0f4f9] text-[#1f1f1f] border border-[#e0e3e7] rounded-bl-xs'
                   }`}
                 >
-                  <p>{msg.content}</p>
+                  <p className="whitespace-pre-line">{msg.content}</p>
 
                   {msg.citations && msg.citations.length > 0 && (
                     <div className="mt-2 pt-2 border-t border-[#c4c7c5]/50 space-y-1">
