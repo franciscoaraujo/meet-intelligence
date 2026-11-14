@@ -29,7 +29,7 @@ public class TranscriptChunkAggregatorService {
     private final ConcurrentHashMap<UUID, Long> chunkStartMap = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<UUID, Integer> wordCountMap = new ConcurrentHashMap<>();
 
-    private static final int MIN_WORDS_PER_CHUNK = 12;
+    private static final int MIN_WORDS_PER_CHUNK = 5;
     private static final int MAX_WORDS_PER_CHUNK = 250;
 
     @Transactional
@@ -48,10 +48,50 @@ public class TranscriptChunkAggregatorService {
         int currentWords = wordCountMap.get(meetingId) + text.split("\\s+").length;
         wordCountMap.put(meetingId, currentWords);
 
-        // Verifica se formou bloco coeso para enviar ao LLM
-        if (currentWords >= MIN_WORDS_PER_CHUNK) {
+        boolean isInterviewerOrQuestion = isImmediateTriggerSegment(segment.getSpeakerLabel(), text);
+
+        // Dispara imediatamente se for pergunta/tópico técnico do entrevistador ou atingir 5 palavras
+        if (isInterviewerOrQuestion || currentWords >= MIN_WORDS_PER_CHUNK) {
             flushChunk(meeting, segment.getEndTimeMs());
         }
+    }
+
+    private boolean isImmediateTriggerSegment(String speakerLabel, String text) {
+        if (text == null || text.isBlank()) return false;
+        String lower = text.toLowerCase();
+        if (speakerLabel != null && speakerLabel.toLowerCase().contains("entrevistador")) {
+            return true;
+        }
+        return lower.contains("?")
+                || lower.contains("explique")
+                || lower.contains("conceito")
+                || lower.contains("o que é")
+                || lower.contains("o que e")
+                || lower.contains("por que")
+                || lower.contains("porque")
+                || lower.contains("como ")
+                || lower.contains("qual ")
+                || lower.contains("quais ")
+                || lower.contains("diferença")
+                || lower.contains("fale sobre")
+                || lower.contains("solid")
+                || lower.contains("sólido")
+                || lower.contains("solido")
+                || lower.contains("polimorfismo")
+                || lower.contains("herança")
+                || lower.contains("encapsulamento")
+                || lower.contains("java")
+                || lower.contains("spring")
+                || lower.contains("microsservi")
+                || lower.contains("arquitetura")
+                || lower.contains("banco")
+                || lower.contains("sql")
+                || lower.contains("docker")
+                || lower.contains("kafka")
+                || lower.contains("rabbit")
+                || lower.contains("react")
+                || lower.contains("rest")
+                || lower.contains("api");
     }
 
     @Transactional
