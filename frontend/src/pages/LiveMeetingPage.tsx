@@ -49,6 +49,12 @@ export const LiveMeetingPage: React.FC = () => {
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
+  // Estados de captura de voz ao vivo (Web Speech API) e envio direto de falas
+  const [interimTranscript, setInterimTranscript] = useState('');
+  const [manualSpeechInput, setManualSpeechInput] = useState('');
+  const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
+  const recognitionRef = useRef<any>(null);
+
   // Tabs do Painel Central
   const [activeTab, setActiveTab] = useState<'insights' | 'summary' | 'tasks' | 'decisions'>('insights');
 
@@ -139,19 +145,81 @@ export const LiveMeetingPage: React.FC = () => {
     }
   };
 
+  const sendLiveSpeechSegment = async (text: string, speaker = speakerRole) => {
+    if (!id || !text.trim()) return;
+    try {
+      const startMs = recordingSeconds * 1000;
+      const res = await api.post(`/meetings/${id}/transcripts/live-text`, {
+        speakerLabel: speaker,
+        text: text.trim(),
+        startTimeMs: startMs,
+        endTimeMs: startMs + 4000,
+      });
+      if (res.data) {
+        setTranscripts((prev) => {
+          if (prev.some((s) => s.id === res.data.id)) return prev;
+          return [...prev, res.data];
+        });
+      }
+    } catch (e) {
+      console.error('Erro ao registrar fala ao vivo:', e);
+    }
+  };
+
+  const handleManualSpeechSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualSpeechInput.trim()) return;
+    const text = manualSpeechInput;
+    setManualSpeechInput('');
+    await sendLiveSpeechSegment(text, speakerRole);
+  };
+
+  const startBrowserSpeechRecognition = () => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.lang = meeting?.language || 'pt-BR';
+      recognition.continuous = true;
+      recognition.interimResults = true;
+
+      recognition.onresult = (event: any) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          const transcriptPiece = event.results[i][0].transcript;
+          if (event.results[i].isFinal) {
+            setInterimTranscript('');
+            sendLiveSpeechSegment(transcriptPiece, 'Microfone ao Vivo');
+          } else {
+            interim += transcriptPiece;
+          }
+        }
+        if (interim) setInterimTranscript(interim);
+      };
+
+      recognition.onerror = () => {};
+      recognition.start();
+      recognitionRef.current = recognition;
+    } catch (err) {
+      console.warn('Reconhecimento de voz nativo não iniciado:', err);
+    }
+  };
+
   const toggleRecording = async () => {
     if (!isRecording) {
       try {
+        await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`).catch(() => {});
+        setIsRecording(true);
+        startBrowserSpeechRecognition();
+
         if (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia) {
           const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-          await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`);
-          setIsRecording(true);
           stream.getVideoTracks()[0].onended = () => stopRecording();
-        } else {
-          setIsRecording(true);
         }
       } catch (err) {
-        console.warn('Captura cancelada ou simulada:', err);
+        console.warn('Captura de tela ignorada; mantendo escuta de microfone ativa:', err);
         setIsRecording(true);
       }
     } else {
@@ -161,8 +229,15 @@ export const LiveMeetingPage: React.FC = () => {
 
   const stopRecording = async () => {
     setIsRecording(false);
+    setInterimTranscript('');
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
     if (id) {
-      await api.patch(`/meetings/${id}/status?status=COMPLETED`);
+      await api.patch(`/meetings/${id}/status?status=COMPLETED`).catch(() => {});
       triggerAiAnalysis();
     }
   };
@@ -484,8 +559,57 @@ export const LiveMeetingPage: React.FC = () => {
                 </div>
               ))
             )}
+            {interimTranscript && (
+              <div className="p-3.5 rounded-2xl border border-dashed border-[#0b57d0] bg-[#e8f0fe]/60 space-y-1 animate-pulse">
+                <span className="text-[11px] font-semibold text-[#0b57d0] flex items-center gap-1.5">
+                  <Mic className="w-3 h-3" /> Capturando voz do microfone...
+                </span>
+                <p className="text-xs text-[#1f1f1f] italic">{interimTranscript}</p>
+              </div>
+            )}
             <div ref={transcriptEndRef} />
           </div>
+
+          {/* Barra inferior para ditar ou simular falas na reunião e enviar para a IA */}
+          <form
+            onSubmit={handleManualSpeechSubmit}
+            className="p-3 border-t border-[#e0e3e7] bg-[#f8fafd] space-y-2 shrink-0"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-1.5 text-[11px] text-[#444746]">
+                <span>Locutor:</span>
+                <select
+                  value={speakerRole}
+                  onChange={(e) => setSpeakerRole(e.target.value)}
+                  className="bg-white border border-[#c4c7c5] rounded-full px-2.5 py-0.5 text-[11px] font-medium text-[#1f1f1f] focus:outline-none focus:border-[#0b57d0]"
+                >
+                  <option value="Francisco Araújo">Francisco Araújo (Você)</option>
+                  <option value="Entrevistador Técnico">Entrevistador Técnico</option>
+                  <option value="Participante Convidado">Participante Convidado</option>
+                </select>
+              </div>
+              <span className="text-[10px] text-[#444746]">
+                Envia para transcrição + análise automática de IA
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={manualSpeechInput}
+                onChange={(e) => setManualSpeechInput(e.target.value)}
+                placeholder="Digite ou fale no microfone para testar a análise da IA em tempo real..."
+                className="flex-1 px-3.5 py-2 bg-white border border-[#c4c7c5] rounded-full text-xs text-[#1f1f1f] placeholder-[#747775] focus:outline-none focus:border-[#0b57d0]"
+              />
+              <button
+                type="submit"
+                disabled={!manualSpeechInput.trim()}
+                className="px-3.5 py-2 rounded-full bg-[#0b57d0] hover:bg-[#0842a0] disabled:opacity-40 text-white text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <Send className="w-3.5 h-3.5" />
+                Registrar Fala
+              </button>
+            </div>
+          </form>
         </section>
 
         {/* ÁREA 2: AI INSIGHTS AUTOMÁTICOS (4 Colunas) */}
