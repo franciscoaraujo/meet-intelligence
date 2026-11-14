@@ -158,22 +158,72 @@ export const LiveMeetingPage: React.FC = () => {
     }
   };
 
+  const refreshAiState = async (meetingId: string) => {
+    try {
+      const [insightsRes, summaryRes, transcriptsRes] = await Promise.allSettled([
+        api.get(`/meetings/${meetingId}/insights`),
+        api.get(`/meetings/${meetingId}/summary`),
+        api.get(`/meetings/${meetingId}/transcripts`),
+      ]);
+      if (insightsRes.status === 'fulfilled' && Array.isArray(insightsRes.value.data)) {
+        setInsights(insightsRes.value.data);
+      }
+      if (summaryRes.status === 'fulfilled' && summaryRes.value.data) {
+        setSummary(summaryRes.value.data);
+      }
+      if (transcriptsRes.status === 'fulfilled' && Array.isArray(transcriptsRes.value.data) && transcriptsRes.value.data.length > 0) {
+        setTranscripts((prev) => {
+          const serverItems: TranscriptSegment[] = transcriptsRes.value.data;
+          const tempItems = prev.filter((item) => String(item.id).startsWith('temp-'));
+          return [...serverItems, ...tempItems];
+        });
+      }
+    } catch (e) {
+      // Silencioso em background
+    }
+  };
+
+  useEffect(() => {
+    if (!id) return;
+    const syncTimer = window.setInterval(() => {
+      refreshAiState(id);
+    }, 4500);
+    return () => clearInterval(syncTimer);
+  }, [id]);
+
   const sendLiveSpeechSegment = async (text: string, speaker = speakerRole) => {
     if (!id || !text.trim()) return;
+    const cleanText = text.trim();
+    const startMs = recordingSecondsRef.current * 1000;
+    const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+
+    // Exibe imediatamente na tela (otimista) para nunca sumir após o fim da fala
+    const optimisticSegment: TranscriptSegment = {
+      id: tempId,
+      meetingId: id,
+      speakerLabel: speaker,
+      originalText: cleanText,
+      startTimeMs: startMs,
+      endTimeMs: startMs + 4000,
+      confidence: 0.99,
+    };
+    setTranscripts((prev) => [...prev, optimisticSegment]);
+
     try {
-      const startMs = recordingSecondsRef.current * 1000;
       const res = await api.post(`/meetings/${id}/transcripts/live-text`, {
         speakerLabel: speaker,
-        text: text.trim(),
+        text: cleanText,
         startTimeMs: startMs,
         endTimeMs: startMs + 4000,
       });
       if (res.data) {
         setTranscripts((prev) => {
-          if (prev.some((s) => s.id === res.data.id)) return prev;
-          return [...prev, res.data];
+          const withoutTemp = prev.filter((s) => s.id !== tempId);
+          if (withoutTemp.some((s) => s.id === res.data.id)) return withoutTemp;
+          return [...withoutTemp, res.data];
         });
       }
+      setTimeout(() => refreshAiState(id), 1500);
     } catch (e) {
       console.error('Erro ao registrar fala ao vivo:', e);
     }
@@ -439,7 +489,14 @@ export const LiveMeetingPage: React.FC = () => {
     if (!id || analyzing) return;
     try {
       setAnalyzing(true);
+      if (interimRef.current && interimRef.current.trim()) {
+        const pending = interimRef.current.trim();
+        interimRef.current = '';
+        setInterimTranscript('');
+        await sendLiveSpeechSegment(pending, speakerRoleRef.current);
+      }
       await api.post(`/meetings/${id}/insights/trigger`);
+      setTimeout(() => refreshAiState(id), 1200);
     } catch (err) {
       console.error('Erro ao acionar IA:', err);
     } finally {
