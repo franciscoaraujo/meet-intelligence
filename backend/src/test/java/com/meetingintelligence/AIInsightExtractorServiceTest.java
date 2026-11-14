@@ -54,6 +54,9 @@ class AIInsightExtractorServiceTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private com.meetingintelligence.application.service.ai.KnowledgeBaseService knowledgeBaseService;
+
     @InjectMocks
     private AIInsightExtractorService insightExtractorService;
 

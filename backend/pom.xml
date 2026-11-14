@@ -83,6 +83,13 @@
             <version>${pgvector.version}</version>
         </dependency>
 
+        <!-- Extração de texto de PDFs (Base de Conhecimento) -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
         <!-- Object Storage (MinIO / S3) -->
         <dependency>
             <groupId>io.minio</groupId>

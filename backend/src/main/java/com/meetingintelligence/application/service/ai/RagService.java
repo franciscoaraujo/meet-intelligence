@@ -36,6 +36,7 @@ public class RagService {
     private final EmbeddingProvider embeddingProvider;
     private final AIOrchestrator aiOrchestrator;
     private final ObjectMapper objectMapper;
+    private final KnowledgeBaseService knowledgeBaseService;
 
     @Transactional
     public ChatMessageResponse processUserMessage(UUID meetingId, ChatMessageRequest request, UserPrincipal currentUser) {
@@ -145,9 +146,14 @@ public class RagService {
             1. Quando o usuário perguntar sobre o que foi discutido, decidido ou atribuído na reunião, responder com base no <transcript_context>.
             2. Quando o usuário pedir para responder uma pergunta técnica do entrevistador (ou perguntar sobre qualquer conceito técnico de engenharia de software, arquitetura, programação, banco de dados, cloud, etc.), fornecer imediatamente uma RESPOSTA TÉCNICA COMPLETA, DIDÁTICA E DIRETA pronta para o candidato falar na entrevista!
             3. Responda sempre em português do Brasil com clareza, precisão e exemplos práticos.
-            """;
+            """ + "\n" + PromptManagerService.KNOWLEDGE_BASE_DIRECTIVES;
 
-        String userPrompt = String.format("""
+        String knowledgeContext = buildKnowledgeContext(meeting, request.getMessage());
+        String knowledgeSection = knowledgeContext.isBlank()
+                ? ""
+                : "BASE DE CONHECIMENTO DO USUÁRIO (currículo e materiais de referência):\n" + knowledgeContext + "\n\n";
+
+        String userPrompt = knowledgeSection + String.format("""
             RESUMO CONSOLIDADO DA REUNIÃO:
             %s
             
@@ -198,6 +204,17 @@ public class RagService {
                 .citations(citations)
                 .createdAt(assistantMessage.getCreatedAt())
                 .build();
+    }
+
+    private String buildKnowledgeContext(Meeting meeting, String question) {
+        if (knowledgeBaseService == null || meeting.getOrganization() == null) return "";
+        try {
+            String context = knowledgeBaseService.buildContext(meeting.getOrganization().getId(), question);
+            return context != null ? context : "";
+        } catch (Exception e) {
+            log.warn("Falha ao montar contexto da Base de Conhecimento: {}", e.getMessage());
+            return "";
+        }
     }
 
     @Transactional(readOnly = true)

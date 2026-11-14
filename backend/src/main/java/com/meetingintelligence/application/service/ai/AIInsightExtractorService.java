@@ -36,6 +36,7 @@ public class AIInsightExtractorService {
     private final TranscriptChunkRepository chunkRepository;
     private final ObjectMapper objectMapper;
     private final SimpMessagingTemplate messagingTemplate;
+    private final KnowledgeBaseService knowledgeBaseService;
 
     @Async
     @Transactional
@@ -56,10 +57,12 @@ public class AIInsightExtractorService {
 
         // 2. Monta os prompts
         String systemPrompt = promptManagerService.buildSystemPrompt(meeting);
+        String knowledgeContext = buildKnowledgeContext(meeting, chunk);
         String userPrompt = promptManagerService.buildIncrementalAnalysisUserPrompt(
                 chunk,
                 summary.getExecutiveSummary(),
-                summary.getCurrentContext()
+                summary.getCurrentContext(),
+                knowledgeContext
         );
 
         LLMRequest request = LLMRequest.builder()
@@ -83,6 +86,16 @@ public class AIInsightExtractorService {
         } catch (Exception e) {
             log.error("Erro durante extração de insights por IA no chunk #{}: {}",
                     chunk.getChunkIndex(), e.getMessage(), e);
+        }
+    }
+
+    private String buildKnowledgeContext(Meeting meeting, TranscriptChunk chunk) {
+        if (knowledgeBaseService == null || meeting.getOrganization() == null) return "";
+        try {
+            return knowledgeBaseService.buildContext(meeting.getOrganization().getId(), chunk.getTextContent());
+        } catch (Exception e) {
+            log.warn("Falha ao montar contexto da Base de Conhecimento: {}", e.getMessage());
+            return "";
         }
     }
 

@@ -19,6 +19,7 @@ import { MeetingsPage } from './pages/MeetingsPage';
 import { LiveMeetingPage } from './pages/LiveMeetingPage';
 import { SummariesPage } from './pages/SummariesPage';
 import { AiProfilesPage } from './pages/AiProfilesPage';
+import { KnowledgeBasePage } from './pages/KnowledgeBasePage';
 import { SettingsPage } from './pages/SettingsPage';
 
 /**
@@ -56,6 +57,7 @@ export const App: React.FC = () => {
             <Route path="meetings" element={<MeetingsPage />} />
             <Route path="summaries" element={<SummariesPage />} />
             <Route path="ai-profiles" element={<AiProfilesPage />} />
+            <Route path="knowledge" element={<KnowledgeBasePage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
 

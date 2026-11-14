@@ -19,6 +19,7 @@ import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 @Slf4j
@@ -248,9 +249,15 @@ public class GeminiLlmProvider implements LLMProvider {
                         || lower.contains("fechado");
 
                 if (isQuestion) {
-                    String answerToDisplay = technicalAnswer != null
-                            ? technicalAnswer
-                            : fetchWikipediaSummaryPtBr(speech);
+                    String kbAnswer = answerFromKnowledgeBase(userPrompt, speech);
+                    String answerToDisplay;
+                    if (kbAnswer != null && (technicalAnswer == null || isPersonalQuestion(speech))) {
+                        answerToDisplay = kbAnswer;
+                    } else if (technicalAnswer != null) {
+                        answerToDisplay = kbAnswer != null ? technicalAnswer + "\n\n" + kbAnswer : technicalAnswer;
+                    } else {
+                        answerToDisplay = fetchWikipediaSummaryPtBr(speech);
+                    }
                     if (answerToDisplay == null || answerToDisplay.isBlank()) {
                         answerToDisplay = buildStructuredTechnicalFallback(speech);
                     }
@@ -328,10 +335,16 @@ public class GeminiLlmProvider implements LLMProvider {
             question = userPrompt.substring(qIdx + "PERGUNTA DO USUÁRIO:".length()).trim();
         }
 
-        // Verifica primeiro se a pergunta do usuário (ou a última fala da reunião) é uma questão técnica
+        // Perguntas sobre o candidato ou cobertas pelo material enviado usam a Base de Conhecimento
+        String kbAnswer = answerFromKnowledgeBase(userPrompt, question);
         String techFromQuestion = solveTechnicalQuestion(question);
+        if (kbAnswer != null && (techFromQuestion == null || isPersonalQuestion(question))) {
+            return kbAnswer;
+        }
+
+        // Verifica se a pergunta do usuário (ou a última fala da reunião) é uma questão técnica
         if (techFromQuestion != null) {
-            return techFromQuestion;
+            return kbAnswer != null ? techFromQuestion + "\n\n" + kbAnswer : techFromQuestion;
         }
         String techFromContext = solveTechnicalQuestion(context);
         if (techFromContext != null && (question.toLowerCase().contains("responda") || question.toLowerCase().contains("pergunta") || question.toLowerCase().contains("ajude") || question.toLowerCase().contains("explique"))) {
@@ -567,6 +580,93 @@ public class GeminiLlmProvider implements LLMProvider {
         }
 
         return null;
+    }
+
+    // ------------------------------------------------------------------
+    // Base de Conhecimento no modo de simulação (sem API Key)
+    // ------------------------------------------------------------------
+
+    private static final java.util.regex.Pattern KB_DOCUMENT = java.util.regex.Pattern.compile(
+            "<document tipo=\"([^\"]*)\" arquivo=\"([^\"]*)\">\\n(.*?)\\n</document>", java.util.regex.Pattern.DOTALL);
+
+    static boolean isPersonalQuestion(String text) {
+        if (text == null) return false;
+        String lower = java.text.Normalizer.normalize(text.toLowerCase(), java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return lower.contains("voce") || lower.contains("sua experiencia") || lower.contains("seu curriculo")
+                || lower.contains("curriculo") || lower.contains("se apresente") || lower.contains("apresente-se")
+                || lower.contains("trajetoria") || lower.contains("carreira") || lower.contains("trabalhou")
+                || lower.contains("seus projetos") || lower.contains("seu projeto") || lower.contains("sua formacao")
+                || lower.contains("pontos fortes") || lower.contains("por que devemos");
+    }
+
+    /**
+     * Monta uma resposta a partir do bloco &lt;knowledge_base&gt; do prompt, sem LLM:
+     * perguntas pessoais recebem o trecho do currículo mais relacionado; as demais,
+     * os parágrafos mais relevantes do material de referência. Retorna null se nada se aplica.
+     */
+    String answerFromKnowledgeBase(String prompt, String question) {
+        if (prompt == null || question == null || question.isBlank()) return null;
+        int start = prompt.indexOf("<knowledge_base>");
+        int end = prompt.indexOf("</knowledge_base>");
+        if (start == -1 || end <= start) return null;
+        String kb = prompt.substring(start, end);
+
+        Set<String> terms = searchTerms(question);
+        boolean personal = isPersonalQuestion(question);
+
+        List<String[]> scoredParagraphs = new java.util.ArrayList<>(); // [score, tipo, texto]
+        String firstResume = null;
+        java.util.regex.Matcher m = KB_DOCUMENT.matcher(kb);
+        while (m.find()) {
+            String tipo = m.group(1);
+            String body = m.group(3).trim();
+            boolean isResume = tipo.startsWith("CURRÍCULO");
+            if (isResume && firstResume == null) firstResume = body;
+            if (personal != isResume) continue;
+            for (String paragraph : body.split("\\n\\s*\\n|\\n(?=[•\\-*])")) {
+                String p = paragraph.trim();
+                if (p.length() < 20) continue;
+                int score = 0;
+                String norm = java.text.Normalizer.normalize(p.toLowerCase(), java.text.Normalizer.Form.NFD)
+                        .replaceAll("\\p{M}", "");
+                for (String t : terms) if (norm.contains(t)) score++;
+                if (score > 0) scoredParagraphs.add(new String[]{String.valueOf(score), tipo, p});
+            }
+        }
+
+        scoredParagraphs.sort((a, b) -> Integer.parseInt(b[0]) - Integer.parseInt(a[0]));
+
+        if (personal) {
+            StringBuilder sb = new StringBuilder("💡 RESPOSTA SUGERIDA (com base no seu currículo):\n");
+            if (!scoredParagraphs.isEmpty()) {
+                scoredParagraphs.stream().limit(3).forEach(p -> sb.append("• ").append(p[2]).append("\n"));
+            } else if (firstResume != null) {
+                sb.append(firstResume.length() > 1200 ? firstResume.substring(0, 1200) + "…" : firstResume);
+            } else {
+                return null;
+            }
+            sb.append("\n(Modo simulação: configure uma API Key de IA para respostas redigidas em primeira pessoa.)");
+            return sb.toString().trim();
+        }
+
+        if (scoredParagraphs.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("📚 Do seu material de referência:\n");
+        scoredParagraphs.stream().limit(2).forEach(p ->
+                sb.append("• ").append(p[2].length() > 700 ? p[2].substring(0, 700) + "…" : p[2]).append("\n"));
+        return sb.toString().trim();
+    }
+
+    private static Set<String> searchTerms(String text) {
+        Set<String> stop = Set.of("que", "para", "com", "uma", "como", "por", "mais", "voce", "sobre", "qual",
+                "quais", "seu", "sua", "fale", "explique", "conte", "pode", "isso", "esse", "essa", "nao", "tem");
+        Set<String> terms = new java.util.HashSet<>();
+        String norm = java.text.Normalizer.normalize(text.toLowerCase(), java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        for (String t : norm.split("[^a-z0-9]+")) {
+            if (t.length() >= 3 && !stop.contains(t)) terms.add(t);
+        }
+        return terms;
     }
 
     private String fetchWikipediaSummaryPtBr(String rawQuery) {

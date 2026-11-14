@@ -8,6 +8,11 @@ spring:
   application:
     name: meeting-intelligence-api
 
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 12MB
+
   # Datasource & JPA
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5435}/${DB_NAME:meet_intelligence}
