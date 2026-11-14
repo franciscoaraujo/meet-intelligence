@@ -66,6 +66,9 @@ export const LiveMeetingPage: React.FC = () => {
   const tabIntervalRef = useRef<number | null>(null);
   const lastTabVoiceMsRef = useRef<number>(0);
   const interimRef = useRef<string>('');
+  const speechBufferRef = useRef<string>('');
+  const speechBufferSpeakerRef = useRef<string>('Francisco Araújo');
+  const speechFlushTimerRef = useRef<number | null>(null);
 
   // Tabs do Painel Central
   const [activeTab, setActiveTab] = useState<'insights' | 'summary' | 'tasks' | 'decisions'>('insights');
@@ -85,13 +88,17 @@ export const LiveMeetingPage: React.FC = () => {
         id,
         (newSegment) => {
           setTranscripts((prev) => {
-            if (prev.some((s) => s.id === newSegment.id)) return prev;
+            if (prev.some((s) => s.id === newSegment.id)) {
+              return prev.map((s) => (s.id === newSegment.id ? newSegment : s));
+            }
             return [...prev, newSegment];
           });
         },
         (newInsight) => {
           setInsights((prev) => {
-            if (prev.some((i) => i.id === newInsight.id)) return prev;
+            if (prev.some((i) => i.id === newInsight.id)) {
+              return prev.map((i) => (i.id === newInsight.id ? newInsight : i));
+            }
             return [newInsight, ...prev];
           });
         },
@@ -228,11 +235,13 @@ export const LiveMeetingPage: React.FC = () => {
       if (res.data) {
         setTranscripts((prev) => {
           const withoutTemp = prev.filter((s) => s.id !== tempId);
-          if (withoutTemp.some((s) => s.id === res.data.id)) return withoutTemp;
+          if (withoutTemp.some((s) => s.id === res.data.id)) {
+            return withoutTemp.map((s) => (s.id === res.data.id ? res.data : s));
+          }
           return [...withoutTemp, res.data];
         });
       }
-      setTimeout(() => refreshAiState(id), 1500);
+      setTimeout(() => refreshAiState(id), 1200);
     } catch (e) {
       console.error('Erro ao registrar fala ao vivo:', e);
     }
@@ -342,21 +351,30 @@ export const LiveMeetingPage: React.FC = () => {
         processor.connect(zeroGain);
         zeroGain.connect(audioCtx.destination);
 
+        let isSendingWav = false;
         const flushTabWavChunk = async () => {
           if (!tabStreamRef.current || audioOnlyStream.getAudioTracks()[0]?.readyState !== 'live') {
             setTabAudioActive(false);
             setTabAudioLevel(0);
             return;
           }
-          if (pcmChunks.length === 0 || !hasVoiceInWindow) {
-            pcmChunks = [];
-            hasVoiceInWindow = false;
+          if (isSendingWav) return;
+          if (!hasVoiceInWindow) {
+            if (pcmChunks.length > 10) pcmChunks = pcmChunks.slice(-6);
+            return;
+          }
+
+          // Aguarda a pessoa terminar a frase (1.5s de silêncio após falar) ou limite máximo de ~11s contínuos
+          const silenceAfterVoiceMs = Date.now() - lastTabVoiceMsRef.current;
+          const reachedMaxBuffer = pcmChunks.length >= 44;
+          if (silenceAfterVoiceMs < 1500 && !reachedMaxBuffer) {
             return;
           }
 
           const chunksToSend = pcmChunks;
           pcmChunks = [];
           hasVoiceInWindow = false;
+          isSendingWav = true;
 
           try {
             const base64Audio = encodePcmToWavBase64(chunksToSend, audioCtx.sampleRate);
@@ -366,20 +384,26 @@ export const LiveMeetingPage: React.FC = () => {
             });
             if (Array.isArray(res.data) && res.data.length > 0) {
               setTranscripts((prev) => {
-                const next = [...prev];
+                let next = [...prev];
                 for (const seg of res.data) {
-                  if (!next.some((s) => s.id === seg.id)) next.push(seg);
+                  if (next.some((s) => s.id === seg.id)) {
+                    next = next.map((s) => (s.id === seg.id ? seg : s));
+                  } else {
+                    next.push(seg);
+                  }
                 }
                 return next;
               });
-              setTimeout(() => refreshAiState(id), 1200);
+              setTimeout(() => refreshAiState(id), 1000);
             }
           } catch (err) {
             console.warn('Erro ao enviar chunk WAV da guia:', err);
+          } finally {
+            isSendingWav = false;
           }
         };
 
-        tabIntervalRef.current = window.setInterval(flushTabWavChunk, 4500);
+        tabIntervalRef.current = window.setInterval(flushTabWavChunk, 800);
       }
 
       displayStream.getVideoTracks()[0].onended = () => {
@@ -419,6 +443,26 @@ export const LiveMeetingPage: React.FC = () => {
     return speakerRoleRef.current;
   };
 
+  const scheduleSpeechBufferFlush = (delayMs = 2200) => {
+    if (speechFlushTimerRef.current) {
+      window.clearTimeout(speechFlushTimerRef.current);
+      speechFlushTimerRef.current = null;
+    }
+    speechFlushTimerRef.current = window.setTimeout(() => {
+      // Se a pessoa ainda estiver no meio de uma palavra (interim ativo), aguarda mais 1.1s para não cortar a frase
+      if (interimRef.current && interimRef.current.trim().length > 0) {
+        scheduleSpeechBufferFlush(1100);
+        return;
+      }
+      const fullSentence = speechBufferRef.current.trim();
+      if (fullSentence.length > 0) {
+        speechBufferRef.current = '';
+        setInterimTranscript('');
+        sendLiveSpeechSegment(fullSentence, speechBufferSpeakerRef.current);
+      }
+    }, delayMs);
+  };
+
   const startBrowserSpeechRecognition = () => {
     const SpeechRecognition =
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -443,7 +487,7 @@ export const LiveMeetingPage: React.FC = () => {
 
       recognition.onstart = () => {
         setMicStatus(
-          'Microfone ativo (sua voz = Francisco Araújo | Guia Meet = Entrevistador)...'
+          'Microfone ativo (aguarda pausa de 2.2s para consolidar a pergunta inteira sem partir)...'
         );
       };
 
@@ -452,16 +496,24 @@ export const LiveMeetingPage: React.FC = () => {
         for (let i = event.resultIndex; i < event.results.length; ++i) {
           const transcriptPiece = event.results[i][0].transcript;
           if (event.results[i].isFinal) {
+            const cleanPiece = transcriptPiece.trim();
+            if (cleanPiece) {
+              speechBufferSpeakerRef.current = resolveActiveSpeaker();
+              speechBufferRef.current = speechBufferRef.current
+                ? `${speechBufferRef.current} ${cleanPiece}`
+                : cleanPiece;
+            }
             interimRef.current = '';
-            setInterimTranscript('');
-            sendLiveSpeechSegment(transcriptPiece, resolveActiveSpeaker());
           } else {
             interim += transcriptPiece;
           }
         }
-        if (interim) {
-          interimRef.current = interim;
-          setInterimTranscript(interim);
+        interimRef.current = interim;
+        const combinedPreview = [speechBufferRef.current, interim.trim()].filter(Boolean).join(' ').trim();
+        setInterimTranscript(combinedPreview);
+
+        if (combinedPreview.length > 0) {
+          scheduleSpeechBufferFlush(2200);
         }
       };
 
@@ -474,13 +526,17 @@ export const LiveMeetingPage: React.FC = () => {
         }
       };
 
-      // Reinicia automaticamente a escuta contínua enquanto a captura estiver ligada
+      // Reinicia automaticamente a escuta contínua sem quebrar frases em andamento
       recognition.onend = () => {
         if (interimRef.current && interimRef.current.trim()) {
           const pending = interimRef.current.trim();
           interimRef.current = '';
-          setInterimTranscript('');
-          sendLiveSpeechSegment(pending, resolveActiveSpeaker());
+          speechBufferSpeakerRef.current = resolveActiveSpeaker();
+          speechBufferRef.current = speechBufferRef.current
+            ? `${speechBufferRef.current} ${pending}`
+            : pending;
+          setInterimTranscript(speechBufferRef.current);
+          scheduleSpeechBufferFlush(1800);
         }
         if (isRecordingRef.current) {
           setTimeout(() => {
@@ -489,7 +545,7 @@ export const LiveMeetingPage: React.FC = () => {
                 recognition.start();
               } catch (e) {}
             }
-          }, 200);
+          }, 150);
         }
       };
 
@@ -532,8 +588,18 @@ export const LiveMeetingPage: React.FC = () => {
     setIsRecording(false);
     setTabAudioActive(false);
     setTabAudioLevel(0);
+    if (speechFlushTimerRef.current) {
+      window.clearTimeout(speechFlushTimerRef.current);
+      speechFlushTimerRef.current = null;
+    }
+    const finalBuffered = [speechBufferRef.current, interimRef.current].filter(Boolean).join(' ').trim();
+    speechBufferRef.current = '';
+    interimRef.current = '';
     setInterimTranscript('');
     setMicStatus('');
+    if (finalBuffered) {
+      sendLiveSpeechSegment(finalBuffered, speechBufferSpeakerRef.current);
+    }
     if (tabIntervalRef.current) {
       clearInterval(tabIntervalRef.current);
       tabIntervalRef.current = null;

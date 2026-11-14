@@ -272,14 +272,46 @@ public class TranscriptionService {
         Meeting meeting = meetingRepository.findById(meetingId)
                 .orElseThrow(() -> new IllegalArgumentException("Reunião não encontrada: " + meetingId));
 
+        String resolvedSpeaker = (speakerLabel != null && !speakerLabel.isBlank()) ? speakerLabel : "Participante (Voz ao Vivo)";
+        String cleanText = text != null ? text.trim() : "";
+
+        // Verifica se este trecho é continuação de uma fala imediatamente anterior do mesmo locutor (pausa curta na fala)
+        List<TranscriptSegment> existingSegments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        if (!existingSegments.isEmpty() && !cleanText.isEmpty()) {
+            TranscriptSegment last = existingSegments.get(existingSegments.size() - 1);
+            String lastText = last.getOriginalText() != null ? last.getOriginalText().trim() : "";
+            boolean sameSpeaker = Objects.equals(last.getSpeakerLabel(), resolvedSpeaker);
+            long timeGapMs = Math.abs(startTimeMs - last.getStartTimeMs());
+
+            if (sameSpeaker && shouldMergeWithPreviousSegment(lastText, cleanText, timeGapMs)) {
+                String mergedText = mergeSpeechFragments(lastText, cleanText);
+                last.setOriginalText(mergedText);
+                last.setEndTimeMs(Math.max(last.getEndTimeMs(), endTimeMs > startTimeMs ? endTimeMs : startTimeMs + 3000L));
+                TranscriptSegment updated = segmentRepository.save(last);
+
+                try {
+                    chunkAggregatorService.onNewSegment(meeting, updated);
+                } catch (Exception e) {
+                    log.warn("Erro ao alimentar agregador semântico de IA após fusão de segmento: {}", e.getMessage());
+                }
+
+                try {
+                    messagingTemplate.convertAndSend("/topic/meetings/" + meetingId + "/transcripts", updated);
+                } catch (Exception e) {
+                    log.warn("Erro ao emitir WebSocket para transcrição atualizada: {}", e.getMessage());
+                }
+                return updated;
+            }
+        }
+
         List<MeetingParticipant> existingParticipants = participantRepository.findByMeetingId(meetingId);
         MeetingParticipant participant = existingParticipants.isEmpty() ? null : existingParticipants.get(0);
 
         TranscriptSegment segment = TranscriptSegment.builder()
                 .meeting(meeting)
                 .participant(participant)
-                .speakerLabel(speakerLabel != null && !speakerLabel.isBlank() ? speakerLabel : "Participante (Voz ao Vivo)")
-                .originalText(text.trim())
+                .speakerLabel(resolvedSpeaker)
+                .originalText(cleanText)
                 .startTimeMs(startTimeMs)
                 .endTimeMs(endTimeMs > startTimeMs ? endTimeMs : startTimeMs + 3000L)
                 .confidence(java.math.BigDecimal.valueOf(0.96))
@@ -304,6 +336,86 @@ public class TranscriptionService {
         }
 
         return saved;
+    }
+
+    private boolean shouldMergeWithPreviousSegment(String prevText, String newText, long timeGapMs) {
+        if (prevText.isEmpty() || newText.isEmpty()) return false;
+        String prevLower = prevText.toLowerCase();
+        String newLower = newText.toLowerCase();
+
+        // Se o novo trecho já contém o texto anterior inteiro (ou compartilha o mesmo início longo de pergunta), substitui/funde
+        if (newLower.startsWith(prevLower) || prevLower.startsWith(newLower)) {
+            return true;
+        }
+        int minPrefix = Math.min(20, Math.min(prevLower.length(), newLower.length()));
+        if (minPrefix >= 15 && prevLower.substring(0, minPrefix).equals(newLower.substring(0, minPrefix)) && timeGapMs <= 18000L) {
+            return true;
+        }
+
+        // Se o novo trecho começa com preposição/conjunção ou tem 1-3 palavras de complemento (ex: "de ordenação", "ordenação", "em micro serviços")
+        boolean startsWithContinuation = newLower.startsWith("de ")
+                || newLower.startsWith("da ")
+                || newLower.startsWith("do ")
+                || newLower.startsWith("dos ")
+                || newLower.startsWith("das ")
+                || newLower.startsWith("e ")
+                || newLower.startsWith("ou ")
+                || newLower.startsWith("em ")
+                || newLower.startsWith("no ")
+                || newLower.startsWith("na ")
+                || newLower.startsWith("nos ")
+                || newLower.startsWith("nas ")
+                || newLower.startsWith("para ")
+                || newLower.startsWith("por ")
+                || newLower.startsWith("com ")
+                || newLower.startsWith("que ")
+                || newLower.startsWith("entre ")
+                || newLower.startsWith("sobre ")
+                || newLower.startsWith("baseada ");
+
+        boolean prevEndsIncomplete = prevLower.endsWith(" de")
+                || prevLower.endsWith(" da")
+                || prevLower.endsWith(" do")
+                || prevLower.endsWith(" dos")
+                || prevLower.endsWith(" das")
+                || prevLower.endsWith(" e")
+                || prevLower.endsWith(" ou")
+                || prevLower.endsWith(" em")
+                || prevLower.endsWith(" para")
+                || prevLower.endsWith(" com")
+                || prevLower.endsWith(" por")
+                || prevLower.endsWith(" que")
+                || prevLower.endsWith(" entre")
+                || prevLower.endsWith(" sobre")
+                || prevLower.endsWith(" algoritmos")
+                || prevLower.endsWith(" arquitetura")
+                || prevLower.endsWith(" conceito");
+
+        int newWordCount = newText.split("\\s+").length;
+        int prevWordCount = prevText.split("\\s+").length;
+
+        if ((startsWithContinuation || prevEndsIncomplete || newWordCount <= 3) && timeGapMs <= 12000L) {
+            return true;
+        }
+
+        // Se chegou em menos de 6 segundos e a frase anterior era curta e não tinha pontuação final
+        return timeGapMs <= 6000L && prevWordCount <= 9 && !prevText.endsWith("?") && !prevText.endsWith(".");
+    }
+
+    private String mergeSpeechFragments(String prevText, String newText) {
+        String prevLower = prevText.toLowerCase();
+        String newLower = newText.toLowerCase();
+        if (newLower.startsWith(prevLower)) {
+            return newText;
+        }
+        if (prevLower.startsWith(newLower)) {
+            return prevText;
+        }
+        int minPrefix = Math.min(20, Math.min(prevLower.length(), newLower.length()));
+        if (minPrefix >= 15 && prevLower.substring(0, minPrefix).equals(newLower.substring(0, minPrefix))) {
+            return newText.length() >= prevText.length() ? newText : prevText;
+        }
+        return prevText + " " + newText;
     }
 
     @Transactional(readOnly = true)

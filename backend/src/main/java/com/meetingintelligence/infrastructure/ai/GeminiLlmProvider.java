@@ -252,7 +252,7 @@ public class GeminiLlmProvider implements LLMProvider {
                             ? technicalAnswer
                             : fetchWikipediaSummaryPtBr(speech);
                     if (answerToDisplay == null || answerToDisplay.isBlank()) {
-                        answerToDisplay = "💡 Dica de Resposta: Contextualize o problema com um exemplo prático de projeto real (Situação -> Tarefa -> Ação Técnica -> Resultado mensurável em produção).";
+                        answerToDisplay = buildStructuredTechnicalFallback(speech);
                     }
 
                     Map<String, Object> qInsight = new HashMap<>();
@@ -356,6 +356,20 @@ public class GeminiLlmProvider implements LLMProvider {
         if (rawText == null || rawText.isBlank()) return null;
         String lower = rawText.toLowerCase().trim();
 
+        // 0. Algoritmos de Ordenação & Complexidade Assintótica (Big-O)
+        if (lower.contains("ordenação") || lower.contains("ordenacao") || lower.contains("complexidade") || lower.contains("big o") || lower.contains("big-o") || lower.contains("quicksort") || lower.contains("mergesort") || lower.contains("bubblesort") || lower.contains("heapsort") || lower.contains("timsort") || lower.contains("busca binária") || lower.contains("busca binaria") || (lower.contains("algoritmo") && (lower.contains("diferença") || lower.contains("tempo") || lower.contains("espaço")))) {
+            return """
+                💡 RESPOSTA SUGERIDA (Complexidade Big-O & Algoritmos de Ordenação):
+                A diferença principal está na eficiência de tempo (Big-O) conforme o volume de dados `n` cresce e no uso de memória auxiliar:
+                • Algoritmos Quadráticos `O(n²)` (Simples, indicados apenas para listas muito pequenas):
+                  - Bubble Sort / Insertion Sort / Selection Sort: Comparam pares adjacentes; no melhor caso (lista quase ordenada) o Insertion Sort faz `O(n)`, mas no caso médio e pior caso fazem `O(n²)`, sendo inviáveis para grandes volumes.
+                • Algoritmos Log-Lineares `O(n log n)` (Divisão e Conquista — padrão de produção):
+                  - QuickSort: `O(n log n)` no caso médio, ordenação *in-place* (memória `O(log n)` da pilha) e excelente localidade de cache. Pior caso `O(n²)` se o pivô for mal escolhido (evitado com pivô aleatório ou Dual-Pivot).
+                  - MergeSort: `O(n log n)` garantido em todos os casos (melhor, médio e pior) e **estável** (preserva a ordem de elementos iguais), porém exige `O(n)` de memória extra.
+                  - HeapSort: `O(n log n)` garantido e *in-place* (`O(1)` de memória extra), mas não é estável.
+                  - TimSort (usado nativamente em `Arrays.sort()` de objetos no Java e `sort()` no Python): Híbrido de MergeSort + Insertion Sort, `O(n)` no melhor caso e `O(n log n)` no pior caso.""";
+        }
+
         // 1. SOLID (incluindo variações fonéticas de transcrição como "sólido", "sólidos", "solid")
         if (lower.contains("solid") || lower.contains("sólido") || lower.contains("sólidos") || lower.contains("solido")) {
             return """
@@ -397,16 +411,56 @@ public class GeminiLlmProvider implements LLMProvider {
                 • Classe Abstrata: Compartilha estado (atributos de instância) e código base entre classes fortemente relacionadas ("o que é"). Permite apenas herança simples.""";
         }
 
-        // 5. Microsserviços vs Monolito
-        if (lower.contains("microsservi") || lower.contains("monolito") || lower.contains("monólito")) {
+        // 5. Microsserviços vs Arquitetura Monolítica (incluindo "monolítica", "micro serviços" separado, etc.)
+        if (lower.contains("microsservi") || lower.contains("micro servi") || lower.contains("micro-servi") || lower.contains("microservice") || lower.contains("monolito") || lower.contains("monólito") || lower.contains("monolítica") || lower.contains("monolitica") || (lower.contains("arquitetura") && lower.contains("diferença"))) {
             return """
-                💡 RESPOSTA SUGERIDA (Microsserviços vs Monolito):
-                • Monolito Modular: Toda a aplicação roda em um único deploy/processo, mas dividida em módulos bem isolados. Tem menor latência de rede, transações ACID simples e menor custo operacional inicial.
-                • Microsserviços: Serviços independentes com bancos de dados próprios comunicando-se via REST/gRPC ou mensageria (Kafka/RabbitMQ). Permite escalar e fazer deploy de partes críticas isoladamente.
-                • Boas práticas em Microsserviços: Outbox Pattern para consistência eventual, Circuit Breaker (Resilience4j), API Gateway, observabilidade distribuída (OpenTelemetry) e idempotência.""";
+                💡 RESPOSTA SUGERIDA (Arquitetura Monolítica vs Microsserviços):
+                • Arquitetura Monolítica (e Monolito Modular): Toda a aplicação é empacotada e executada em um único processo/deploy e compartilha o mesmo banco de dados.
+                  - Vantagens: Menor complexidade operacional, chamadas em memória (latência zero de rede), transações ACID diretas e facilidade de depuração inicial.
+                  - Desvantagens: Acoplamento evolutivo se não for modularizado, deploy único (qualquer alteração exige subir o sistema todo) e escala apenas por inteiro.
+                • Arquitetura de Microsserviços: O sistema é dividido em serviços autônomos e independentes, cada um focado em um domínio de negócio (Bounded Context do DDD) e com seu próprio banco de dados.
+                  - Vantagens: Escalabilidade independente (escala só o serviço gargalo), deploys isolados por equipe, tolerância a falhas parcial e liberdade tecnológica.
+                  - Desafios e Padrões: Exige comunicação assíncrona (RabbitMQ/Kafka), consistência eventual (Saga / Outbox Pattern), resiliência (Circuit Breaker / Retry), API Gateway e observabilidade distribuída (Tracing com OpenTelemetry).""";
         }
 
-        // 6. Kafka vs RabbitMQ / Mensageria
+        // 6. Estruturas de Dados (Array vs LinkedList, HashMap, Pilha, Fila, Árvore)
+        if (lower.contains("hashmap") || lower.contains("tabela hash") || lower.contains("linkedlist") || lower.contains("arraylist") || lower.contains("lista encadeada") || lower.contains("estrutura de dados") || lower.contains("estruturas de dados") || (lower.contains("pilha") && lower.contains("fila"))) {
+            return """
+                💡 RESPOSTA SUGERIDA (Estruturas de Dados Essenciais):
+                • ArrayList vs LinkedList: `ArrayList` usa array dinâmico contíguo em memória com acesso por índice `O(1)`, enquanto `LinkedList` usa nós duplamente encadeados com busca `O(n)`, mas inserção/remoção nas extremidades `O(1)`.
+                • HashMap (Tabela Hash): Armazena pares chave-valor usando `hashCode()` e `equals()`. Busca e inserção são `O(1)` em média; quando ocorrem colisões de hash no Java 8+, listas com mais de 8 elementos no mesmo bucket viram Árvores Rubro-Negras (`O(log n)`).
+                • Pilha (Stack - LIFO: Last In, First Out) vs Fila (Queue - FIFO: First In, First Out).""";
+        }
+
+        // 7. Concorrência, Threads, Paralelismo vs Assincronismo, Deadlock, Race Condition
+        if (lower.contains("deadlock") || lower.contains("race condition") || lower.contains("concorrência") || lower.contains("concorrencia") || lower.contains("paralelismo") || lower.contains("multithread") || lower.contains("assíncrono") || lower.contains("assincrono")) {
+            return """
+                💡 RESPOSTA SUGERIDA (Concorrência, Paralelismo & Thread Safety):
+                • Concorrência vs Paralelismo: Concorrência é lidar com várias tarefas alternando contexto (mesmo em 1 core); Paralelismo é executar múltiplas tarefas simultaneamente em múltiplos núcleos de CPU.
+                • Race Condition (Condição de Corrida): Quando duas threads acessam/modificam estado compartilhado mutável sem sincronização. Evita-se com objetos imutáveis, classes atômicas (`AtomicInteger`), `ConcurrentHashMap` ou locks.
+                • Deadlock: Duas threads ficam bloqueadas esperando recursos uma da outra em ciclo. Previne-se adquirindo locks sempre na mesma ordem global e definindo timeouts.""";
+        }
+
+        // 8. Segurança Web, JWT, OAuth2, CORS, CSRF, SQL Injection
+        if (lower.contains("jwt") || lower.contains("oauth") || lower.contains("autenticação") || lower.contains("autorização") || lower.contains("cors") || lower.contains("csrf") || lower.contains("sql injection") || lower.contains("segurança")) {
+            return """
+                💡 RESPOSTA SUGERIDA (Segurança, Autenticação & Autorização - JWT / OAuth2):
+                • Autenticação vs Autorização: Autenticação valida *quem é o usuário* (`401 Unauthorized` se falhar); Autorização valida *o que ele tem permissão de acessar* via RBAC/Roles (`403 Forbidden` se negado).
+                • JWT (JSON Web Token): Token *stateless* assinado digitalmente (HMAC ou RSA) contendo Header, Payload (claims) e Signature. Usa-se Access Token curto (ex: 15 min) + Refresh Token rotativo.
+                • OAuth2 & OpenID Connect (OIDC): Protocolo padrão de delegação de autorização e identidade federada (SSO).
+                • Proteções OWASP: Prepared Statements (JPA/Hibernate) contra SQL Injection, sanitização contra XSS e configuração estrita de CORS.""";
+        }
+
+        // 9. Escalabilidade, Cloud, Cache (Redis), Load Balancer, Teorema CAP
+        if (lower.contains("escalabilidade") || lower.contains("redis") || lower.contains("cache") || lower.contains("load balancer") || lower.contains("teorema cap") || lower.contains("horizontal") && lower.contains("vertical")) {
+            return """
+                💡 RESPOSTA SUGERIDA (Escalabilidade, Cache Redis & Sistemas Distribuídos):
+                • Escalabilidade Vertical (Scale Up) vs Horizontal (Scale Out): Vertical aumenta CPU/RAM de uma máquina (tem limite físico e ponto único de falha); Horizontal adiciona mais instâncias stateless atrás de um Load Balancer.
+                • Cache com Redis: Armazenamento em memória (`O(1)`) usando padrões como *Cache-Aside* (lê do cache; se der miss, busca no banco e popula o cache com TTL) e *Distributed Lock*.
+                • Teorema CAP: Em presença de Partição de rede (P), um sistema distribuído deve escolher entre Consistência imediata (CP) ou Disponibilidade total (AP).""";
+        }
+
+        // 10. Kafka vs RabbitMQ / Mensageria
         if (lower.contains("kafka") || lower.contains("rabbitmq") || lower.contains("mensageria") || lower.contains("fila")) {
             return """
                 💡 RESPOSTA SUGERIDA (RabbitMQ vs Apache Kafka):
@@ -414,7 +468,7 @@ public class GeminiLlmProvider implements LLMProvider {
                 • Apache Kafka (Event Streaming Platform): Log distribuído imutável e particionado de altíssimo throughput. Os eventos ficam retidos em disco e múltiplos Consumer Groups podem reler o histórico (replay). Ideal para Event Sourcing, CDC e Big Data.""";
         }
 
-        // 7. Spring Boot / Injeção de Dependência / IoC
+        // 11. Spring Boot / Injeção de Dependência / IoC
         if (lower.contains("spring") || lower.contains("injeção de dependência") || lower.contains("injecao de dependencia") || lower.contains("inversão de controle")) {
             return """
                 💡 RESPOSTA SUGERIDA (Spring Boot & Injeção de Dependência / IoC):
@@ -423,7 +477,7 @@ public class GeminiLlmProvider implements LLMProvider {
                 • Spring Boot: Oferece autoconfiguração inteligente, servidor embarcado (Tomcat/Netty), Actuator para healthchecks/métricas e integração nativa com Spring Security e Spring Data JPA.""";
         }
 
-        // 8. JPA / Hibernate / Problema N+1
+        // 12. JPA / Hibernate / Problema N+1
         if (lower.contains("hibernate") || lower.contains("jpa") || lower.contains("n+1") || lower.contains("lazy")) {
             return """
                 💡 RESPOSTA SUGERIDA (JPA / Hibernate & Problema N+1):
@@ -432,28 +486,29 @@ public class GeminiLlmProvider implements LLMProvider {
                 • Boas práticas: Sempre usar `FetchType.LAZY` por padrão em `@ManyToOne` e `@OneToMany`, `open-in-view: false` e nunca expor entidades JPA diretamente sem DTO ou `@JsonIgnore`.""";
         }
 
-        // 9. Banco de Dados / ACID / SQL vs NoSQL / Índices
-        if (lower.contains("acid") || lower.contains("transação") || lower.contains("nosql") || (lower.contains("banco") && lower.contains("dados")) || lower.contains("índice") || lower.contains("indice")) {
+        // 13. Banco de Dados / ACID / SQL vs NoSQL / Índices
+        if (lower.contains("acid") || lower.contains("transação") || lower.contains("nosql") || (lower.contains("banco") && lower.contains("dados")) || lower.contains("índice") || lower.contains("indice") || lower.contains("sql")) {
             return """
-                💡 RESPOSTA SUGERIDA (Banco de Dados & ACID):
-                • Propriedades ACID:
+                💡 RESPOSTA SUGERIDA (Banco de Dados, SQL vs NoSQL & ACID):
+                • Propriedades ACID (Bancos Relacionais como PostgreSQL):
                   - Atomicidade: Tudo ou nada (se falhar uma etapa, faz rollback de tudo).
                   - Consistência: Garante que todas as constraints, chaves estrangeiras e regras do banco sejam respeitadas.
-                  - Isolamento: Transações concorrentes não interferem umas nas outras (níveis Read Committed, Repeatable Read, Serializable).
+                  - Isolamento: Transações concorrentes não interferem umas nas outras (Read Committed, Repeatable Read, Serializable).
                   - Durabilidade: Após o commit, os dados persistem mesmo em queda de energia (via WAL - Write-Ahead Logging).
+                • SQL vs NoSQL: SQL garante integridade relacional e joins complexos; NoSQL (MongoDB, DynamoDB, Cassandra, Redis) foca em esquemas flexíveis e escalabilidade horizontal massiva.
                 • Otimização: Uso de índices B-Tree para buscas exatas/ranges, índices GIN para JSONB/Full-Text e HNSW no `pgvector` para busca vetorial de IA.""";
         }
 
-        // 10. REST / API / HTTP / Idempotência
-        if (lower.contains("rest") || lower.contains("idempot") || lower.contains("status code") || (lower.contains("api") && lower.contains("http"))) {
+        // 14. REST / API / HTTP / Idempotência / GraphQL / gRPC
+        if (lower.contains("rest") || lower.contains("idempot") || lower.contains("status code") || lower.contains("graphql") || lower.contains("grpc") || (lower.contains("api") && lower.contains("http"))) {
             return """
-                💡 RESPOSTA SUGERIDA (APIs RESTful & Idempotência):
+                💡 RESPOSTA SUGERIDA (APIs RESTful, Idempotência, GraphQL & gRPC):
                 • REST: Arquitetura baseada em recursos (substantivos na URI), stateless, utilizando verbos HTTP semânticos (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) e códigos de status adequados (`200 OK`, `201 Created`, `204 No Content`, `400 Bad Request`, `401 Unauthorized`, `403 Forbidden`, `404 Not Found`, `422 Unprocessable Entity`, `500`).
-                • Idempotência: Uma operação é idempotente quando executá-la 1 ou N vezes produz o mesmo estado no servidor (`GET`, `PUT`, `DELETE` são naturalmente idempotentes; para `POST` crítico usa-se `Idempotency-Key` no header).""";
+                • Idempotência: Uma operação é idempotente quando executá-la 1 ou N vezes produz o mesmo estado no servidor (`GET`, `PUT`, `DELETE` são naturalmente idempotentes; para `POST` financeiro/crítico usa-se `Idempotency-Key` no header).""";
         }
 
-        // 11. Clean Architecture / Hexagonal / DDD
-        if (lower.contains("clean architecture") || lower.contains("arquitetura limpa") || lower.contains("hexagonal") || lower.contains("ddd") || lower.contains("domain-driven")) {
+        // 15. Clean Architecture / Hexagonal / DDD
+        if (lower.contains("clean architecture") || lower.contains("arquitetura limpa") || lower.contains("hexagonal") || lower.contains("ddd") || lower.contains("domain-driven") || lower.contains("clean code")) {
             return """
                 💡 RESPOSTA SUGERIDA (Clean Architecture, Hexagonal & DDD):
                 • Objetivo central: Isolar o Domínio (regras de negócio puras) de frameworks, banco de dados e APIs externas.
@@ -461,7 +516,7 @@ public class GeminiLlmProvider implements LLMProvider {
                 • DDD (Domain-Driven Design): Linguagem Ubíqua, Bounded Contexts, Entidades Ricas (com comportamento), Value Objects imutáveis, Agregados e Domain Events.""";
         }
 
-        // 12. Design Patterns
+        // 16. Design Patterns
         if (lower.contains("design pattern") || lower.contains("padrões de projeto") || lower.contains("padroes de projeto") || lower.contains("strategy") || lower.contains("factory") || lower.contains("singleton")) {
             return """
                 💡 RESPOSTA SUGERIDA (Design Patterns GoF mais usados):
@@ -471,7 +526,7 @@ public class GeminiLlmProvider implements LLMProvider {
                 • Circuit Breaker / Decorator: Protege chamadas externas contra falhas em cascata.""";
         }
 
-        // 13. Docker / Kubernetes / CI/CD
+        // 17. Docker / Kubernetes / CI/CD
         if (lower.contains("docker") || lower.contains("kubernetes") || lower.contains("k8s") || lower.contains("ci/cd") || lower.contains("container")) {
             return """
                 💡 RESPOSTA SUGERIDA (Docker, Kubernetes & CI/CD):
@@ -479,28 +534,36 @@ public class GeminiLlmProvider implements LLMProvider {
                 • Kubernetes (K8s): Orquestra containers em produção com auto-healing (Liveness/Readiness probes), auto-scaling horizontal (HPA), Rolling Updates sem downtime e gerenciamento de Secrets/ConfigMaps.""";
         }
 
-        // 14. Testes Unitários / TDD / Pirâmide de Testes
-        if (lower.contains("tdd") || lower.contains("teste unitário") || lower.contains("testes unitários") || lower.contains("pirâmide de testes")) {
+        // 18. Testes Unitários / TDD / Pirâmide de Testes
+        if (lower.contains("tdd") || lower.contains("teste unitário") || lower.contains("testes unitários") || lower.contains("pirâmide de testes") || lower.contains("mockito")) {
             return """
                 💡 RESPOSTA SUGERIDA (Pirâmide de Testes & TDD):
                 • Pirâmide de Testes: Base larga de Testes Unitários rápidos e isolados (JUnit 5 + Mockito), camada intermediária de Testes de Integração (Testcontainers com PostgreSQL/Redis reais) e topo enxuto de Testes E2E.
                 • TDD (Test-Driven Development): Ciclo Red (escreve o teste que falha) -> Green (implementa o código mínimo para passar) -> Refactor (melhora o design mantendo os testes verdes).""";
         }
 
-        // 15. Java 21 / Virtual Threads / JVM
-        if (lower.contains("java 21") || lower.contains("virtual thread") || lower.contains("jvm") || lower.contains("garbage collector")) {
+        // 19. Java 21 / Virtual Threads / JVM
+        if (lower.contains("java 21") || lower.contains("virtual thread") || lower.contains("jvm") || lower.contains("garbage collector") || lower.contains("java ")) {
             return """
-                💡 RESPOSTA SUGERIDA (Java 21 LTS & Virtual Threads):
+                💡 RESPOSTA SUGERIDA (Java 21 LTS, JVM & Virtual Threads):
                 • Virtual Threads (Project Loom - Java 21): Threads ultraleves gerenciadas pela JVM em vez de mapeamento 1:1 com threads do sistema operacional. Quando uma operação bloqueante de I/O ocorre (banco de dados ou chamada HTTP), a JVM desmonta a Virtual Thread sem bloquear a OS Thread, permitindo escalar milhares de requisições simultâneas com código simples e síncrono.
-                • Outros recursos modernos do Java 21: Records (imutabilidade enxuta), Pattern Matching for Switch e Sealed Classes.""";
+                • Outros recursos modernos do Java 21: Records (imutabilidade enxuta), Pattern Matching for Switch, Sequenced Collections e G1/ZGC Garbage Collectors de baixa latência.""";
         }
 
-        // 16. React / TypeScript / Frontend
+        // 20. React / TypeScript / Frontend
         if (lower.contains("react") || lower.contains("virtual dom") || lower.contains("useeffect") || lower.contains("typescript")) {
             return """
                 💡 RESPOSTA SUGERIDA (React & TypeScript):
                 • React: Biblioteca declarativa baseada em componentes e estado unidirecional. Utiliza reconciliação (Virtual DOM / Fiber) para atualizar apenas os nós reais do DOM que mudaram.
                 • Hooks essenciais: `useState` (estado local), `useEffect` (efeitos colaterais e ciclo de vida), `useRef` (referências mutáveis sem re-renderizar) e `useMemo`/`useCallback` (otimização de performance).""";
+        }
+
+        // 21. Git / GitFlow / Trunk-Based Development
+        if (lower.contains("gitflow") || lower.contains("git flow") || lower.contains("rebase") || lower.contains("merge") || lower.contains("trunk")) {
+            return """
+                💡 RESPOSTA SUGERIDA (Git, Merge vs Rebase & Fluxos de Branching):
+                • Merge vs Rebase: `git merge` preserva o histórico cronológico criando um commit de junção; `git rebase` reescreve os commits da feature branch sobre o topo da `main`, mantendo um histórico linear e limpo.
+                • Trunk-Based Development vs GitFlow: Em times ágeis com CI/CD contínuo, prefere-se branches curtas integradas diariamente na `main` (Trunk-Based) com Feature Flags.""";
         }
 
         return null;
@@ -510,15 +573,20 @@ public class GeminiLlmProvider implements LLMProvider {
         if (rawQuery == null || rawQuery.isBlank()) return null;
         try {
             String cleaned = rawQuery.toLowerCase()
-                    .replaceAll("(?i)(explique|para mim|o que é|o que e|por que|porque|qual a|quais|me fale sobre|fale sobre|conceito de|responda|pergunta|entrevistador|:|\\?|!|\\.)", " ")
+                    .replaceAll("(?i)(explique|para mim|o que é|o que e|por que|porque|qual a diferença entre|qual a diferenca entre|qual a|quais|me fale sobre|fale sobre|conceito de|responda|pergunta|entrevistador|:|\\?|!|\\.)", " ")
+                    .replaceAll("\\s+", " ")
                     .trim();
             if (cleaned.length() < 3) return null;
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.set("User-Agent", "MeetIntelligenceCopilot/1.0 (https://github.com/franciscoaraujo/meet-intelligence)");
+            HttpEntity<Void> reqEntity = new HttpEntity<>(headers);
 
             String searchUrl = "https://pt.wikipedia.org/w/api.php?action=query&list=search&srsearch="
                     + java.net.URLEncoder.encode(cleaned, java.nio.charset.StandardCharsets.UTF_8)
                     + "&utf8=1&format=json&srlimit=1";
 
-            ResponseEntity<String> searchRes = restTemplate.getForEntity(searchUrl, String.class);
+            ResponseEntity<String> searchRes = restTemplate.exchange(searchUrl, org.springframework.http.HttpMethod.GET, reqEntity, String.class);
             if (searchRes.getStatusCode().is2xxSuccessful() && searchRes.getBody() != null) {
                 JsonNode searchRoot = objectMapper.readTree(searchRes.getBody());
                 JsonNode searchArr = searchRoot.path("query").path("search");
@@ -527,7 +595,7 @@ public class GeminiLlmProvider implements LLMProvider {
                     if (!pageTitle.isBlank()) {
                         String summaryUrl = "https://pt.wikipedia.org/api/rest_v1/page/summary/"
                                 + java.net.URLEncoder.encode(pageTitle.replace(" ", "_"), java.nio.charset.StandardCharsets.UTF_8);
-                        ResponseEntity<String> sumRes = restTemplate.getForEntity(summaryUrl, String.class);
+                        ResponseEntity<String> sumRes = restTemplate.exchange(summaryUrl, org.springframework.http.HttpMethod.GET, reqEntity, String.class);
                         if (sumRes.getStatusCode().is2xxSuccessful() && sumRes.getBody() != null) {
                             JsonNode sumRoot = objectMapper.readTree(sumRes.getBody());
                             String extract = sumRoot.path("extract").asText("").trim();
@@ -542,6 +610,20 @@ public class GeminiLlmProvider implements LLMProvider {
             log.debug("Fallback Wikipedia não retornou para '{}': {}", rawQuery, e.getMessage());
         }
         return null;
+    }
+
+    private String buildStructuredTechnicalFallback(String question) {
+        String cleanTopic = question
+                .replaceAll("(?i)^(qual a diferença entre|qual a diferenca entre|qual a|quais são|quais sao|o que é|o que e|como funciona|explique|fale sobre|me conte sobre)\\s*", "")
+                .replaceAll("[?!.]+$", "")
+                .trim();
+        if (cleanTopic.isBlank()) {
+            cleanTopic = question.trim();
+        }
+        return "💡 RESPOSTA ESTRUTURADA (" + cleanTopic + "):\n"
+                + "• Definição Conceitual: Explique o objetivo central de " + cleanTopic + " e qual problema arquitetural ou de engenharia ele resolve.\n"
+                + "• Comparação e Trade-offs: Destaque as vantagens de performance, manutenibilidade e escalabilidade, bem como os custos ou limites de uso.\n"
+                + "• Aplicação Prática: Cite um caso real em produção (ex: em microsserviços Java/Spring Boot ou aplicações distribuídas) e como medir o resultado.";
     }
 }
 

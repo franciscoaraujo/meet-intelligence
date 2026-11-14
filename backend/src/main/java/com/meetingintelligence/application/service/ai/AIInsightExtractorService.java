@@ -132,18 +132,43 @@ public class AIInsightExtractorService {
                     String speakerRef = node.path("speaker_reference").asText(null);
                     double conf = node.path("confidence").asDouble(0.95);
 
-                    AIInsight insight = AIInsight.builder()
-                            .meeting(meeting)
-                            .category(category)
-                            .title(title)
-                            .description(desc)
-                            .speakerReference(speakerRef)
-                            .startTimeMs(chunk.getStartTimeMs())
-                            .endTimeMs(chunk.getEndTimeMs())
-                            .confidence(BigDecimal.valueOf(conf))
-                            .build();
+                    // Verifica se já existe um insight recente na mesma reunião que era um fragmento incompleto desta mesma pergunta/fala
+                    List<AIInsight> existingInsights = insightRepository.findByMeetingIdOrderByCreatedAtAsc(meeting.getId());
+                    AIInsight insightToSave = null;
+                    int checkStart = Math.max(0, existingInsights.size() - 4);
+                    for (int i = existingInsights.size() - 1; i >= checkStart; i--) {
+                        AIInsight prev = existingInsights.get(i);
+                        if (prev.getCategory() == category && prev.getTitle() != null) {
+                            String prevClean = prev.getTitle().replaceAll("[\"❓?]", "").trim().toLowerCase();
+                            String newClean = title.replaceAll("[\"❓?]", "").trim().toLowerCase();
+                            int commonCheck = Math.min(24, Math.min(prevClean.length(), newClean.length()));
+                            if (newClean.startsWith(prevClean)
+                                    || prevClean.startsWith(newClean)
+                                    || (commonCheck >= 18 && prevClean.substring(0, commonCheck).equals(newClean.substring(0, commonCheck)))) {
+                                prev.setTitle(title.length() >= prev.getTitle().length() ? title : prev.getTitle());
+                                prev.setDescription(desc);
+                                prev.setEndTimeMs(chunk.getEndTimeMs());
+                                prev.setConfidence(BigDecimal.valueOf(conf));
+                                insightToSave = prev;
+                                break;
+                            }
+                        }
+                    }
 
-                    AIInsight savedInsight = insightRepository.save(insight);
+                    if (insightToSave == null) {
+                        insightToSave = AIInsight.builder()
+                                .meeting(meeting)
+                                .category(category)
+                                .title(title)
+                                .description(desc)
+                                .speakerReference(speakerRef)
+                                .startTimeMs(chunk.getStartTimeMs())
+                                .endTimeMs(chunk.getEndTimeMs())
+                                .confidence(BigDecimal.valueOf(conf))
+                                .build();
+                    }
+
+                    AIInsight savedInsight = insightRepository.save(insightToSave);
 
                     // Se for TAREFA (Action Item)
                     if (category == InsightCategory.TASK) {
