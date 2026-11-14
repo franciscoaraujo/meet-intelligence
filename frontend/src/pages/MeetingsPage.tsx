@@ -66,6 +66,12 @@ export const MeetingsPage: React.FC = () => {
     }
   };
 
+  const stripHtml = (html?: string) => {
+    if (!html) return '';
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    return doc.body.textContent || '';
+  };
+
   return (
     <div className="p-8 space-y-6 max-w-7xl mx-auto w-full">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -149,8 +155,17 @@ export const MeetingsPage: React.FC = () => {
                     {getStatusLabel(m.status)}
                   </span>
                   <div className="flex items-center gap-2">
-                    <span className="text-xs text-[#444746]">
-                      {new Date(m.createdAt).toLocaleDateString('pt-BR')}
+                    <span className="text-xs text-[#444746] font-medium">
+                      {new Date(m.scheduledStart || m.createdAt).toLocaleDateString('pt-BR')}{' '}
+                      {m.scheduledStart && (
+                        <>
+                          às{' '}
+                          {new Date(m.scheduledStart).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </>
+                      )}
                     </span>
                     <button
                       onClick={(e) => handleDeleteMeeting(m.id, e)}
@@ -166,7 +181,7 @@ export const MeetingsPage: React.FC = () => {
                   {m.title}
                 </h3>
                 {m.description && (
-                  <p className="text-xs text-[#444746] mt-1.5 line-clamp-2">{m.description}</p>
+                  <p className="text-xs text-[#444746] mt-1.5 line-clamp-2">{stripHtml(m.description)}</p>
                 )}
               </div>
 

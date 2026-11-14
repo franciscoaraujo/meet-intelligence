@@ -12,6 +12,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppLayout } from './components/layout/AppLayout';
 import { LoginPage } from './pages/LoginPage';
 import { DashboardPage } from './pages/DashboardPage';
+import { CalendarPage } from './pages/CalendarPage';
 import { MeetingsPage } from './pages/MeetingsPage';
 import { LiveMeetingPage } from './pages/LiveMeetingPage';
 import { SummariesPage } from './pages/SummariesPage';
@@ -47,12 +48,9 @@ export const App: React.FC = () => {
             }
           >
             <Route index element={<DashboardPage />} />
+            <Route path="calendar" element={<CalendarPage />} />
             <Route path="meetings" element={<MeetingsPage />} />
-            <Route path="calendar" element={<DashboardPage />} />
-            <Route path="transcripts" element={<MeetingsPage />} />
-            <Route path="insights" element={<MeetingsPage />} />
             <Route path="summaries" element={<SummariesPage />} />
-            <Route path="tasks" element={<MeetingsPage />} />
             <Route path="ai-profiles" element={<AiProfilesPage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>

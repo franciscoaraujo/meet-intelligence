@@ -4,9 +4,7 @@ import {
   LayoutDashboard,
   Video,
   Calendar,
-  FileText,
   ClipboardList,
-  CheckSquare,
   Sliders,
   Settings,
   LogOut,
@@ -35,11 +33,9 @@ export const AppLayout: React.FC = () => {
 
   const navItems = [
     { label: 'Visão Geral', path: '/', icon: LayoutDashboard },
-    { label: 'Reuniões Google Meet', path: '/meetings', icon: Video },
     { label: 'Agenda Sincronizada', path: '/calendar', icon: Calendar },
+    { label: 'Reuniões Google Meet', path: '/meetings', icon: Video },
     { label: 'Atas e Relatórios', path: '/summaries', icon: ClipboardList },
-    { label: 'Transcrições', path: '/transcripts', icon: FileText },
-    { label: 'Plano de Ação & Tarefas', path: '/tasks', icon: CheckSquare },
     { label: 'Perfis de Análise', path: '/ai-profiles', icon: Sliders },
     { label: 'Configurações & Planos', path: '/settings', icon: Settings },
   ];
