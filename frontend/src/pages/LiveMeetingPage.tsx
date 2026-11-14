@@ -71,7 +71,9 @@ export const LiveMeetingPage: React.FC = () => {
   const [activeTab, setActiveTab] = useState<'insights' | 'summary' | 'tasks' | 'decisions'>('insights');
 
   const timerRef = useRef<number | null>(null);
+  const transcriptContainerRef = useRef<HTMLDivElement | null>(null);
   const transcriptEndRef = useRef<HTMLDivElement | null>(null);
+  const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -122,11 +124,15 @@ export const LiveMeetingPage: React.FC = () => {
   }, [isRecording]);
 
   useEffect(() => {
-    transcriptEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (transcriptContainerRef.current) {
+      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
+    }
   }, [transcripts]);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
+    }
   }, [chatMessages, chatLoading]);
 
   const loadMeetingData = async (meetingId: string) => {
@@ -689,9 +695,9 @@ export const LiveMeetingPage: React.FC = () => {
   const decisionInsights = insights.filter((i) => i.category === 'DECISION');
 
   return (
-    <div className="flex flex-col h-full bg-white overflow-hidden">
+    <div className="flex flex-col h-[calc(100vh-76px)] max-h-[calc(100vh-76px)] bg-white overflow-hidden">
       {/* Banner LGPD Material 3 */}
-      <div className="bg-[#e8f0fe] border-b border-[#d3e3fd] px-6 py-1.5 flex items-center justify-between text-xs text-[#041e49]">
+      <div className="bg-[#e8f0fe] border-b border-[#d3e3fd] px-6 py-1.5 flex items-center justify-between text-xs text-[#041e49] shrink-0">
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-3.5 h-3.5 text-[#0b57d0]" />
           <span>
@@ -798,9 +804,9 @@ export const LiveMeetingPage: React.FC = () => {
       </header>
 
       {/* Grid Principal: 3 ÁREAS */}
-      <div className="flex-1 grid grid-cols-12 min-h-0 divide-x divide-[#e0e3e7]">
+      <div className="flex-1 grid grid-cols-12 grid-rows-[minmax(0,1fr)] min-h-0 h-full overflow-hidden divide-x divide-[#e0e3e7]">
         {/* ÁREA 1: TRANSCRIÇÃO AO VIVO (5 Colunas) */}
-        <section className="col-span-5 flex flex-col min-h-0 bg-white">
+        <section className="col-span-5 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-white">
           <div className="p-3.5 border-b border-[#e0e3e7] flex items-center justify-between gap-3 shrink-0 bg-[#f8fafd]">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-[#0b57d0]" />
@@ -873,7 +879,7 @@ export const LiveMeetingPage: React.FC = () => {
             </div>
           )}
 
-          <div className="flex-1 p-4 overflow-y-auto space-y-3">
+          <div ref={transcriptContainerRef} className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
             {isRecording && micStatus && (
               <div className="px-3.5 py-2 rounded-xl bg-[#e6f4ea] border border-[#c4eed0] text-[#146c2e] text-xs font-medium flex items-center justify-between">
                 <span className="flex items-center gap-2">
@@ -1009,7 +1015,7 @@ export const LiveMeetingPage: React.FC = () => {
         </section>
 
         {/* ÁREA 2: AI INSIGHTS AUTOMÁTICOS (4 Colunas) */}
-        <section className="col-span-4 flex flex-col min-h-0 bg-[#f8fafd]/60">
+        <section className="col-span-4 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-[#f8fafd]/60">
           <div className="p-3 border-b border-[#e0e3e7] flex items-center justify-between shrink-0 bg-[#f8fafd]">
             <div className="flex items-center gap-1.5">
               <Sparkles className="w-4 h-4 text-[#0b57d0]" />
@@ -1052,7 +1058,7 @@ export const LiveMeetingPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex-1 p-4 overflow-y-auto space-y-3">
+          <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
             {activeTab === 'insights' && (
               <>
                 {insights.length === 0 ? (
@@ -1169,7 +1175,7 @@ export const LiveMeetingPage: React.FC = () => {
         </section>
 
         {/* ÁREA 3: CHAT CONTEXTUAL COM IA (RAG) (3 Colunas) */}
-        <section className="col-span-3 flex flex-col min-h-0 bg-white">
+        <section className="col-span-3 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-white">
           <div className="p-3.5 border-b border-[#e0e3e7] flex items-center justify-between shrink-0 bg-[#f8fafd]">
             <div className="flex items-center gap-2">
               <MessageSquare className="w-4 h-4 text-[#0b57d0]" />
@@ -1181,7 +1187,7 @@ export const LiveMeetingPage: React.FC = () => {
           </div>
 
           {/* Histórico do Chat */}
-          <div className="flex-1 p-3.5 overflow-y-auto space-y-3">
+          <div ref={chatContainerRef} className="flex-1 min-h-0 p-3.5 overflow-y-auto space-y-3">
             {chatMessages.map((msg) => (
               <div key={msg.id} className={`flex flex-col ${msg.senderType === 'USER' ? 'items-end' : 'items-start'}`}>
                 <div
