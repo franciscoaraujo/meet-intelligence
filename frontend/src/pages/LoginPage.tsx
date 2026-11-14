@@ -287,11 +287,10 @@ export const LoginPage: React.FC = () => {
 
             <button
               type="button"
-              onClick={handleDemoAccess}
-              disabled={loading}
-              className="text-xs text-[#444746] hover:text-[#1f1f1f] hover:underline cursor-pointer"
+              onClick={() => navigate('/landing')}
+              className="text-xs font-medium text-[#0b57d0] hover:underline cursor-pointer"
             >
-              Modo Demonstração
+              Ver Apresentação & Comparativo
             </button>
           </div>
         </div>

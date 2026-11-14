@@ -10,7 +10,8 @@ import {
   LogOut,
   Search,
   Building2,
-  User as UserIcon
+  User as UserIcon,
+  Sparkles,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -38,6 +39,7 @@ export const AppLayout: React.FC = () => {
     { label: 'Atas e Relatórios', path: '/summaries', icon: ClipboardList },
     { label: 'Perfis de Análise', path: '/ai-profiles', icon: Sliders },
     { label: 'Configurações & Planos', path: '/settings', icon: Settings },
+    { label: 'Por que Meet Intelligence?', path: '/landing', icon: Sparkles },
   ];
 
   return (
