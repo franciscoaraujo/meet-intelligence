@@ -10,19 +10,47 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Map;
+
+/**
+ * Controller responsável pela autenticação via Google OAuth 2.0 (ID Token e Access Token)
+ * e pelo gerenciamento dinâmico do Google OAuth Client ID.
+ */
 @RestController
 @RequestMapping("/api/v1/auth")
 @RequiredArgsConstructor
-@Tag(name = "Autenticação", description = "Endpoints de autenticação e integração Google OAuth")
+@Tag(name = "Autenticação", description = "Endpoints de autenticação real com Google OAuth 2.0")
 public class AuthController {
 
     private final AuthService authService;
 
     @PostMapping("/google")
-    @Operation(summary = "Autenticar via Google OAuth", description = "Recebe a credencial/token do Google e retorna o JWT da aplicação")
+    @Operation(summary = "Autenticar via Google OAuth 2.0", description = "Valida o Access Token ou ID Token real nos servidores do Google e emite o JWT da aplicação")
     public ResponseEntity<AuthResponse> loginWithGoogle(@Valid @RequestBody GoogleAuthRequest request) {
         AuthResponse response = authService.authenticateWithGoogle(request);
         return ResponseEntity.ok(response);
     }
-}
 
+    @GetMapping("/google/config")
+    @Operation(summary = "Obter configuração pública do Google OAuth Client ID")
+    public ResponseEntity<Map<String, Object>> getGoogleConfig() {
+        String clientId = authService.getGoogleClientId();
+        boolean configured = clientId != null && !clientId.isBlank() && !clientId.equals("test-client-id");
+        return ResponseEntity.ok(Map.of(
+                "clientId", configured ? clientId : "",
+                "configured", configured
+        ));
+    }
+
+    @PostMapping("/google/config")
+    @Operation(summary = "Configurar dinamicamente o Google OAuth Client ID")
+    public ResponseEntity<Map<String, Object>> updateGoogleConfig(@RequestBody Map<String, String> body) {
+        String clientId = body.getOrDefault("clientId", "").trim();
+        authService.setGoogleClientId(clientId);
+        boolean configured = !clientId.isBlank() && !clientId.equals("test-client-id");
+        return ResponseEntity.ok(Map.of(
+                "clientId", clientId,
+                "configured", configured
+        ));
+    }
+}
