@@ -1,0 +1,50 @@
+# Corpus de calibração da detecção de perguntas (spec 005, T-01) — REVISÃO DO USUÁRIO PENDENTE
+# formato: texto|papel(SELF/REMOTE)|esperado(QUESTION|NOT_QUESTION)
+# QUESTION = deve ser respondida pelo copiloto (pergunta direta ou indireta ao candidato)
+# Frases da reunião real de 2026-11-15 (com erros reais de transcrição):
+explique o conceito de sólido|REMOTE|QUESTION
+como você trataria a resiliência de uma publicação de micro serviço que não responde|REMOTE|QUESTION
+cair em um dia de pipa|REMOTE|NOT_QUESTION
+Explique sobre a residência do Rap me Kill Parque MT|REMOTE|QUESTION
+# Perguntas diretas
+O que é injeção de dependência?|REMOTE|QUESTION
+Qual a diferença entre Kafka e RabbitMQ?|REMOTE|QUESTION
+Quais são os princípios do SOLID|REMOTE|QUESTION
+Como funciona o garbage collector do Java|REMOTE|QUESTION
+Por que você usaria o padrão Outbox?|REMOTE|QUESTION
+Quando faz sentido usar microsserviços em vez de um monolito|REMOTE|QUESTION
+Você já trabalhou com Spring Batch?|REMOTE|QUESTION
+Você conhece o teorema CAP|REMOTE|QUESTION
+Qual foi o maior desafio técnico do seu último projeto|REMOTE|QUESTION
+Como você garante consistência entre serviços?|REMOTE|QUESTION
+Já usou Kubernetes em produção?|REMOTE|QUESTION
+Tem experiência com mensageria?|REMOTE|QUESTION
+Como você lidaria com um conflito técnico na equipe|REMOTE|QUESTION
+O que acontece se duas threads acessarem o mesmo HashMap|REMOTE|QUESTION
+Qual banco de dados vocês usariam para isso|REMOTE|QUESTION
+# Perguntas indiretas / pedidos (sem ponto de interrogação)
+me fale um pouco sobre sua experiência com mensageria|REMOTE|QUESTION
+fala sobre como você estruturou o projeto OrionPay|REMOTE|QUESTION
+descreva a arquitetura do último sistema que você construiu|REMOTE|QUESTION
+gostaria de entender como você faria o versionamento dessa API|REMOTE|QUESTION
+me dá um exemplo de uso de polimorfismo|REMOTE|QUESTION
+compare REST e gRPC|REMOTE|QUESTION
+pode explicar como funciona uma transação distribuída|REMOTE|QUESTION
+conta pra mim como foi a migração do monolito|REMOTE|QUESTION
+quero entender como você testa código concorrente|REMOTE|QUESTION
+# Comentários, menções técnicas e falas de contexto (não devem disparar resposta)
+aqui a gente usa Kafka e Spring|REMOTE|NOT_QUESTION
+nosso time trabalha com Java 21 e PostgreSQL|REMOTE|NOT_QUESTION
+ótimo, faz sentido|REMOTE|NOT_QUESTION
+entendi, legal|REMOTE|NOT_QUESTION
+como eu disse antes, usamos microsserviços|REMOTE|NOT_QUESTION
+o que eu quero dizer é que o sistema é grande|REMOTE|NOT_QUESTION
+a vaga é para o time de pagamentos|REMOTE|NOT_QUESTION
+vamos para a próxima parte da entrevista|REMOTE|NOT_QUESTION
+bom dia, tudo bem|REMOTE|NOT_QUESTION
+perfeito, obrigado pela resposta|REMOTE|NOT_QUESTION
+a API REST é chamada pelo front|REMOTE|NOT_QUESTION
+# Falas do candidato (nunca respondidas pelo copiloto)
+Então, o SOLID é um conjunto de cinco princípios|SELF|NOT_QUESTION
+Qual seria o volume de mensagens por segundo?|SELF|NOT_QUESTION
+Eu usei o Transactional Outbox no OrionPay|SELF|NOT_QUESTION

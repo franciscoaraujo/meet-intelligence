@@ -82,6 +82,11 @@ public class TranscriptSegment {
     @Column(name = "capture_end_ms")
     private Long captureEndMs;
 
+    /** Fala do microfone que repete a da aba (alto-falante captado); não gera pergunta (spec 005, RF-07). */
+    @Column(name = "echo_suspected", nullable = false)
+    @Builder.Default
+    private boolean echoSuspected = false;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

@@ -2,6 +2,8 @@
 
 Pré-requisitos: spec 003 `T-03` (papel do falante nos segmentos).
 
+**Status (2026-11-15):** T-01 a T-11 concluídas no backend. Evidência: corpus de 42 frases com 27/27 perguntas detectadas e 0/15 falsos positivos (`UtteranceClassifierTest` 5), `QuestionPrimitivesTest` 9, `QuestionDetectionServiceTest` 10 (inclui concorrência com pool real), `MigrationsIT` (V9 contra PostgreSQL). Backend 93 testes verdes. **Pendente:** revisão do corpus pelo usuário (T-01) — o corpus foi escrito pelo agente e tem risco de sobreajuste; tópico `/questions` consumido pelo frontend na spec 004.
+
 | ID | Tarefa | Depende de | Concluída quando |
 |---|---|---|---|
 | T-01 | Corpus de teste (≥ 40 frases rotuladas em pt-BR, incluindo as da reunião real e as transcrições com erros de STT) em `src/test/resources/question-corpus.csv` | — | Corpus revisado pelo usuário (contém o vocabulário real das entrevistas) |

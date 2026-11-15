@@ -33,7 +33,7 @@ segmento gravado (spec 002/003)
 |---|---|
 | Termina com "?" | +0,45 |
 | Começa com interrogativo (o que, qual, quais, como, por que, quando, onde, quem, você já, você conhece, já trabalhou) | +0,35 |
-| Verbo de pedido (explique, descreva, conte, fale sobre, me fale, compare, detalhe, dê um exemplo, como você faria/trataria) | +0,40 |
+| Verbo de pedido (explique, descreva, conte, fale sobre, me fale, compare, detalhe, dê um exemplo, como você faria/trataria) | +0,45 (calibrado: era 0,40 e perdia as duas perguntas reais da reunião de campo) |
 | Papel `REMOTE` com usuário `Candidato` | +0,15 |
 | Conteúdo técnico (léxico de `TextRelevance` + termos do domínio) | +0,10 (só reforço) |
 | Papel `SELF` com usuário `Candidato` | força `CANDIDATE_ANSWER` |
@@ -79,3 +79,16 @@ A pontuação é limitada a 1,0. O tipo vem do sinal dominante: "?" ou interroga
 | Execução serial por reunião, em memória | RabbitMQ (já no compose) | Resolve a ordem e a concorrência numa instância sem nova peça. O RabbitMQ fica documentado como evolução P3 para múltiplas instâncias. |
 | Dedup por Jaccard de radicais | Embeddings/pgvector | Reaproveita `TextRelevance` (já testado) e é síncrono e barato; embeddings dependem de chave da OpenAI |
 | Tabela própria de perguntas | Reusar `ai_insights` | A pergunta tem ciclo de vida próprio (detectada → respondida → refeita); o insight passa a ser a resposta |
+
+## Mudanças na implementação (2026-11-15)
+| Design original | Implementado | Justificativa |
+|---|---|---|
+| Peso do verbo de pedido: +0,40 | +0,45 | Com 0,40, as duas perguntas reais da reunião de campo ("explique o conceito de sólido", "Explique sobre a residência do Rap me Kill") ficavam em 0,55 e não eram respondidas: o STT troca termos técnicos, então o reforço técnico não pontua. Resultado no corpus: 27/27 perguntas, 0/15 falsos positivos. |
+| — | Sinal "dirigida ao candidato" (+0,10 para "você/sua/seu" em frase interrogativa ou pedido) | Perguntas comportamentais sem termo técnico ("como você lidaria com um conflito…") ficavam abaixo do limiar |
+| — | Interrogativos falsos ("como eu disse…", "o que eu quero dizer…") não contam | Evitam falso positivo comum em fala natural |
+| Gatilho manual dentro de `POST /insights/trigger` | Endpoint próprio `POST /meetings/{id}/questions/answer-latest` | "Consolidar com IA" (também chamado ao parar a gravação) não deve criar perguntas; são ações diferentes |
+| Deduplicação por Jaccard dos radicais | Jaccard **sem palavras de enquadramento** ("explique", "pode", "de novo"…) + contenção ≥ 0,9; crescimento medido pelo conteúdo | "Explique o SOLID" e "Pode explicar o SOLID de novo?" só diferem no enquadramento; antes eram tratadas como perguntas diferentes |
+| `closeDue` global | `closeDue` por reunião | Mantém a garantia de execução serial por reunião |
+| `flushRemaining` refazia os últimos 10 segmentos quando não havia bloco pendente | Removido | Reanalisava conteúdo já analisado e duplicava insights (P-11) |
+| — | IA e indexação do bloco disparadas só após o commit (`AfterCommit`) | A análise roda em outra thread e o insight referencia o bloco (FK `chunk_id`, V9) |
+| Copiloto chamado pela interface | `InterviewCopilot` + `PendingInterviewCopilot` provisório | A implementação real é a spec 004 |

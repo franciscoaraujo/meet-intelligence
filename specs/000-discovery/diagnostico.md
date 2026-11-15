@@ -110,12 +110,12 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 - **Causa raiz:** o microfone usa segundos desde o "gravar" da página (zera ao recarregar). A aba usa `quantidadeDeSegmentos × 5000` (`TranscriptionService:213`). O cliente não envia horário de captura no `/chunk`.
 - **Situação:** a ordem da lista já foi corrigida (ordenação por `createdAt`, não commitada), mas os horários `mm:ss` exibidos e a lógica de fusão por `timeGapMs` continuam errados.
 
-### P-10 · P1 — Fusão de falas une perguntas distintas
+### P-10 · P1 — ✅ resolvido pela spec 005 — Fusão de falas une perguntas distintas
 - **Causa raiz:** `shouldMergeWithPreviousSegment` funde quando a fala anterior tem ≤ 9 palavras, sem pontuação final, e chegou em < 6 s, comparando relógios inconsistentes (P-09).
 - **Evidência:** na reunião real, "explique o conceito de SOLID" e "como você trataria a resiliência…" viraram um único segmento e um único insight.
 - **Agravante:** o segmento fundido é reenviado inteiro ao agregador (linha ~295), e o mesmo texto entra de novo no próximo bloco.
 
-### P-11 · P1 — Gatilho de IA dispara para quase toda fala
+### P-11 · P1 — ✅ resolvido pela spec 005 — Gatilho de IA dispara para quase toda fala
 - **Causa raiz:** `isImmediateTriggerSegment` dispara para qualquer fala do "entrevistador" ou que contenha `como `, `qual `, `api`, `rest` (casa "restante"), `banco`, `java`, `spring`… Além disso, `MIN_WORDS_PER_CHUNK = 5`. Na prática há uma chamada de LLM por fala.
 - **Agravantes:**
   - Os buffers em memória (`ConcurrentHashMap<UUID, StringBuilder>`) têm leitura e escrita não atômicas.
@@ -123,11 +123,11 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
   - `flushRemaining` (botão/fim da gravação) reprocessa os últimos 10 segmentos e gera insights duplicados.
 - **Impacto:** custo, ruído no painel e insights repetidos.
 
-### P-12 · P1 — Deduplicação de insights frágil
+### P-12 · P1 — ✅ resolvido pela spec 005 — Deduplicação de insights frágil
 - **Causa raiz:** a comparação é só por prefixo de título entre os últimos 4 insights da mesma categoria (`AIInsightExtractorService:148-169`). Tarefas e decisões não são deduplicadas. Insights de blocos processados em paralelo (executor sem limite, sem ordem por reunião) competem entre si.
 - **Impacto:** a mesma pergunta aparece várias vezes, e respostas sobrescrevem umas às outras.
 
-### P-13 · P1 — Insight sem vínculo rastreável com a origem
+### P-13 · P1 — ✅ resolvido pela spec 005 — Insight sem vínculo rastreável com a origem
 - **Causa raiz:** `ai_insights` guarda só `start_time_ms`/`end_time_ms` do bloco (com relógio inconsistente), sem `chunk_id`, sem segmentos de origem e sem o texto da pergunta detectada. Se o JSON do LLM falha no parse, o bloco é marcado `processedByAi=true` mesmo assim (linhas 80-83), e o insight é perdido sem rastro.
 
 ### P-14 · P1 — Copiloto responde a menções, não a perguntas
@@ -138,7 +138,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
   - Na simulação (sem chave), `GeminiLlmProvider` (linhas 238-279) detecta pergunta por palavra-chave, usa respostas fixas e **consulta a Wikipédia com a fala da entrevista** (dado enviado a terceiro).
 - **Impacto:** respostas genéricas para comentários, e nenhuma diferenciação entre pergunta e resposta do candidato.
 
-### P-15 · P2 — Concorrência e ordem do processamento assíncrono
+### P-15 · P2 — ✅ resolvido pela spec 005 — Concorrência e ordem do processamento assíncrono
 - **Causa raiz:** `@Async` roda no `SimpleAsyncTaskExecutor`, com uma thread por tarefa, sem limite e sem fila (confirmado nos logs: `cTaskExecutor-N`). Blocos da mesma reunião são analisados em paralelo e fora de ordem: o resumo incremental (`version`) sofre condição de corrida.
 
 ### P-16 · P2 — Observabilidade insuficiente

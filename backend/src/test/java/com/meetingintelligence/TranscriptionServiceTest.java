@@ -53,6 +53,7 @@ class TranscriptionServiceTest {
     @Mock private TranscriptionChainFactory chainFactory;
     @Mock private SimpMessagingTemplate messagingTemplate;
     @Mock private TranscriptChunkAggregatorService chunkAggregatorService;
+    @Mock private com.meetingintelligence.application.service.question.QuestionDetectionService questionDetection;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private com.meetingintelligence.application.service.SpeakerAttributionService speakerAttribution;
 
@@ -136,7 +137,8 @@ class TranscriptionServiceTest {
         assertThat(ingestions.get(0).getStatus()).isEqualTo(TranscriptIngestion.Status.TRANSCRIBED);
         assertThat(ingestions.get(0).getSegmentId()).isEqualTo(seg.getId());
         verify(messagingTemplate).convertAndSend(eq("/topic/meetings/" + meetingId + "/transcripts"), any(TranscriptSegment.class));
-        verify(chunkAggregatorService).onNewSegment(any(), any());
+        verify(chunkAggregatorService).onNewSegment(any(), any(), eq("Explique o conceito de SOLID"));
+        verify(questionDetection).onSegment(any());
     }
 
     @Test

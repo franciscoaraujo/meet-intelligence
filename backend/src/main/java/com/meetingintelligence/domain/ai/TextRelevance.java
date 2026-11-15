@@ -97,6 +97,27 @@ public final class TextRelevance {
         return token.length() > STEM_LENGTH ? token.substring(0, STEM_LENGTH) : token;
     }
 
+    /** Radicais significativos do texto, sem expansões de tradução (para comparar textos entre si). */
+    public static Set<String> contentStems(String text) {
+        Set<String> stems = new HashSet<>();
+        for (String token : normalize(text).split("[^a-z0-9]+")) {
+            if (token.length() >= 3 && !STOPWORDS.contains(token)) stems.add(stem(token));
+        }
+        return stems;
+    }
+
+    /** Similaridade de Jaccard entre os radicais de dois textos (0 a 1). */
+    public static double jaccard(String a, String b) {
+        Set<String> sa = contentStems(a);
+        Set<String> sb = contentStems(b);
+        if (sa.isEmpty() && sb.isEmpty()) return 1.0;
+        Set<String> inter = new HashSet<>(sa);
+        inter.retainAll(sb);
+        Set<String> union = new HashSet<>(sa);
+        union.addAll(sb);
+        return (double) inter.size() / union.size();
+    }
+
     /** Radicais significativos da consulta, incluindo expansões PT → EN. */
     public static Set<String> queryStems(String query) {
         Set<String> stems = new HashSet<>();

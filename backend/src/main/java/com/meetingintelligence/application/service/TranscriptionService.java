@@ -58,6 +58,7 @@ public class TranscriptionService {
     private final com.meetingintelligence.application.service.ai.TranscriptChunkAggregatorService chunkAggregatorService;
     private final PlatformTransactionManager transactionManager;
     private final SpeakerAttributionService speakerAttribution;
+    private final com.meetingintelligence.application.service.question.QuestionDetectionService questionDetection;
 
     // ------------------------------------------------------------- Áudio ao vivo
 
@@ -238,7 +239,7 @@ public class TranscriptionService {
                     .source(result.provider())
                     .audioSource(AudioSource.UPLOAD)
                     .build());
-            publish(meeting, saved);
+            publish(meeting, saved, saved.getOriginalText());
         }
         return result;
     }
@@ -305,7 +306,8 @@ public class TranscriptionService {
                 last.setEndTimeMs(Math.max(last.getEndTimeMs(), safeEnd));
                 if (captureEndMs != null) last.setCaptureEndMs(captureEndMs);
                 TranscriptSegment updated = segmentRepository.save(last);
-                publish(meeting, updated);
+                // A IA recebe só o trecho novo; o segmento fundido inteiro já foi analisado antes (RF-11)
+                publish(meeting, updated, cleanText);
                 return updated;
             }
         }
@@ -326,20 +328,44 @@ public class TranscriptionService {
                 .captureStartMs(captureStartMs)
                 .captureEndMs(captureEndMs)
                 .build());
-        publish(meeting, saved);
+        publish(meeting, saved, cleanText);
         return saved;
     }
 
-    private void publish(Meeting meeting, TranscriptSegment segment) {
+    /**
+     * Publica o segmento: agregador (resumo/tarefas/decisões), WebSocket e detecção de perguntas.
+     *
+     * @param newText somente o texto novo deste segmento (na fusão, o fragmento acrescentado)
+     */
+    private void publish(Meeting meeting, TranscriptSegment segment, String newText) {
         try {
-            chunkAggregatorService.onNewSegment(meeting, segment);
+            chunkAggregatorService.onNewSegment(meeting, segment, newText);
         } catch (Exception e) {
             log.warn("Erro ao alimentar agregador semântico de IA: {}", e.getClass().getSimpleName());
         }
+        var event = new com.meetingintelligence.application.service.question.SegmentEvent(
+                meeting.getId(), segment.getId(), newText, segment.getAudioSource(), segment.getSpeakerRole(),
+                meeting.getUserInterviewRole(), segment.getCaptureStartMs(), segment.getCaptureEndMs());
+        // Só após o commit: a detecção roda em outra thread e precisa enxergar o segmento gravado
+        afterCommit(() -> questionDetection.onSegment(event));
         try {
             messagingTemplate.convertAndSend("/topic/meetings/" + meeting.getId() + "/transcripts", segment);
         } catch (Exception e) {
             log.warn("Erro ao emitir WebSocket para transcrição: {}", e.getClass().getSimpleName());
+        }
+    }
+
+    private static void afterCommit(Runnable action) {
+        if (org.springframework.transaction.support.TransactionSynchronizationManager.isSynchronizationActive()) {
+            org.springframework.transaction.support.TransactionSynchronizationManager.registerSynchronization(
+                    new org.springframework.transaction.support.TransactionSynchronization() {
+                        @Override
+                        public void afterCommit() {
+                            action.run();
+                        }
+                    });
+        } else {
+            action.run();
         }
     }
 
