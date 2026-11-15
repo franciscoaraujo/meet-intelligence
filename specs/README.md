@@ -4,12 +4,12 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 
 | Spec | Tema | Prioridade | Status |
 |---|---|---|---|
-| [001](001-audio-capture/spec.md) | Captura de áudio (aba do Meet e microfone) | P0 / P2 | Rascunho, aguardando aprovação |
-| [002](002-transcription-fallback/spec.md) | Fallback de transcrição | P0 | Rascunho, aguardando aprovação |
-| [003](003-speaker-identification/spec.md) | Identificação de falantes | P2 (base da 005) | Rascunho, aguardando aprovação |
-| [004](004-ai-interview-copilot/spec.md) | Copiloto de entrevistas | P1 | Rascunho, aguardando aprovação |
-| [005](005-question-detection/spec.md) | Detecção de perguntas e deduplicação | P1 | Rascunho, aguardando aprovação |
-| [006](006-integration-testing/spec.md) | Testes automatizados e de integração | P0 (infraestrutura) | Rascunho, aguardando aprovação |
+| [001](001-audio-capture/spec.md) | Captura de áudio (aba do Meet e microfone) | P0 / P2 | Aprovada, não iniciada |
+| [002](002-transcription-fallback/spec.md) | Fallback de transcrição | P0 | **Implementada** (testes automatizados; reunião real pendente) |
+| [003](003-speaker-identification/spec.md) | Identificação de falantes | P2 (base da 005) | Aprovada, não iniciada |
+| [004](004-ai-interview-copilot/spec.md) | Copiloto de entrevistas | P1 | Aprovada, não iniciada |
+| [005](005-question-detection/spec.md) | Detecção de perguntas e deduplicação | P1 | Aprovada, não iniciada |
+| [006](006-integration-testing/spec.md) | Testes automatizados e de integração | P0 (infraestrutura) | Em andamento (T-01 e T-02 concluídas) |
 | 007 (proposta) | Segurança: WebSocket autenticado, isolamento entre organizações, chaves criptografadas | P1 | Não iniciada |
 
 ## Ordem de implementação proposta

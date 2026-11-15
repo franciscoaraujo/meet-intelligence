@@ -52,6 +52,22 @@ export interface TranscriptSegment {
   confidence?: number;
   /** Instante real em que a fala foi registrada no servidor; ausente em itens otimistas recém-criados. */
   createdAt?: string;
+  /** Provedor que transcreveu (GEMINI, DEEPGRAM, OPENAI_TRANSCRIBE, WEB_SPEECH...). */
+  source?: string;
+  /** Origem do áudio (spec 002/003). */
+  audioSource?: 'TAB' | 'MIC' | 'UPLOAD' | 'MANUAL';
+  captureStartMs?: number;
+  captureEndMs?: number;
+}
+
+/** Resposta do POST /transcripts/chunk (spec 002). */
+export interface ChunkTranscriptionResponse {
+  status: 'TRANSCRIBED' | 'NO_SPEECH' | 'FAILED' | 'PROCESSING';
+  provider?: string;
+  segments: TranscriptSegment[];
+  attempts?: { provider: string; outcome: string; reason?: string; latencyMs: number }[];
+  failureReason?: string;
+  duplicate: boolean;
 }
 
 export interface AIInsight {

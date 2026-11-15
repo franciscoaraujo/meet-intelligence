@@ -108,6 +108,21 @@ app:
     deepgram:
       api-key: ${DEEPGRAM_API_KEY:mock-key}
 
+  # Transcrição (spec 002)
+  speech:
+    # Simulação de transcrição para desenvolvimento sem chaves (grava source=SIMULATION). Nunca em produção.
+    simulation-enabled: ${SPEECH_SIMULATION_ENABLED:false}
+    local-google-stt:
+      # STT via Python/speech_recognition (endpoint não oficial do Google, sem SLA). Só desenvolvimento.
+      enabled: ${LOCAL_GOOGLE_STT_ENABLED:false}
+    timeout:
+      connect-ms: 3000
+      live-read-ms: 15000
+      batch-read-ms: 120000
+    retry-delay-ms: 500
+    live-budget-ms: 30000
+    batch-budget-ms: 300000
+
 # Resilience4j
 resilience4j:
   circuitbreaker:

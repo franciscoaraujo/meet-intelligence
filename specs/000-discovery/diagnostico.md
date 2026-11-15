@@ -62,7 +62,7 @@ Infraestrutura no `docker-compose.yml`: PostgreSQL+pgvector, Redis, RabbitMQ e M
 
 Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta qualidade/operação; **P3** evolução.
 
-### P-01 · P0 — Fallback de transcrição nunca é acionado no fluxo ao vivo
+### P-01 · P0 — ✅ resolvido pela spec 002 — Fallback de transcrição nunca é acionado no fluxo ao vivo
 - **Sintoma:** 24 trechos de áudio processados e só 5 transcritos na reunião real. Os outros 19 foram descartados sem tentar o Deepgram nem o Whisper.
 - **Causa raiz:** `transcribeLiveTabAudioWithOrgAi()` devolve `Collections.emptyList()` em três situações distintas: áudio < 1.500 bytes (linha 112), texto duplicado (linha 209) e **todos os provedores falharam** (linha 225). `processAudio()` testa só `liveSegments != null` (linhas 56-61) e trata a lista vazia como sucesso, então o `SpeechToTextRouter` nunca é chamado com `isLiveStream=true`. Além disso, as falhas internas (Gemini, gpt-transcribe) são engolidas com `log.warn`, sem distinguir "sem fala" de "erro".
 - **Arquivos:** `TranscriptionService.java:47-226`, `SpeechToTextRouter.java:21-31`.
@@ -88,12 +88,12 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 - **Causa raiz:** `createScriptProcessor(4096,1,1)` (linha 349) é API descontinuada e roda na thread de UI, que também faz `setTabAudioLevel` a cada ~256 ms e re-renderiza a página de 1.414 linhas.
 - **Impacto:** risco de áudio picotado sob carga e de remoção futura pelo navegador.
 
-### P-06 · P0 — Provedores de STT devolvem transcrição inventada em vez de erro
+### P-06 · P0 — ✅ resolvido pela spec 002 — Provedores de STT devolvem transcrição inventada em vez de erro
 - **Causa raiz:** `DeepgramSpeechToTextProvider` e `OpenAiWhisperSpeechToTextProvider` chamam `generateMockTranscription()` (falas fixas de "Carlos Silva (Host)" e "Mariana Costa") quando **não há chave e também quando a chamada falha** (Deepgram linhas 49-51, 71-75, 83-85, 133-137; Whisper 51-52, 85-89, 97-99, 155-157).
 - **Consequências:** o `catch` do `SpeechToTextRouter` nunca é acionado, porque nada lança exceção, e texto falso é persistido como se fosse da reunião.
 - **Dependência crítica:** hoje o P-01 impede que isso aconteça no fluxo ao vivo. **Corrigir o P-01 sem corrigir o P-06 passaria a gravar falas falsas em reuniões reais.**
 
-### P-07 · P1 — Chamadas HTTP sem timeout e sem política de retry
+### P-07 · P1 — ✅ resolvido pela spec 002 — Chamadas HTTP sem timeout e sem política de retry
 - **Causa raiz:** todos os clientes usam `new RestTemplate()` sem timeout (`TranscriptionService:45`, provedores de IA e de STT). Não há retry por provedor. O `AIOrchestrator` tem circuit breaker, mas o STT não.
 - **Impacto:** uma chamada travada segura a thread HTTP do `/chunk` e a fila do frontend (`isSendingWav`) indefinidamente.
 
@@ -148,7 +148,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
   - Alguns logs registram o **texto transcrito** (`TranscriptionService:214`), um dado pessoal.
   - O Actuator está habilitado, mas sem métricas próprias.
 
-### P-17 · P2 — STT local via Python sem controle
+### P-17 · P2 — ✅ resolvido pela spec 002 — STT local via Python sem controle
 - **Causa raiz:** `transcribeWavViaLocalGoogleStt` cria um processo `python` por trecho, usando `recognize_google`: endpoint não oficial, sem SLA, com envio do áudio ao Google. A saída padrão é mesclada ao `stderr` (`redirectErrorStream(true)`), então avisos do Python podem virar "transcrição" (só `Traceback` é filtrado). Foi o provedor efetivamente usado na reunião real, com baixa qualidade em termos técnicos.
 
 ### P-18 · P2 — Sincronização redundante na tela

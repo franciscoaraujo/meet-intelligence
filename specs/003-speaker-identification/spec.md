@@ -1,6 +1,6 @@
 # Spec 003 — Identificação de falantes
 
-Prioridade: **P2** (fundação necessária para a 005) · Status: **Rascunho, aguardando aprovação** · Problemas: P-08, P-09
+Prioridade: **P2** (fundação necessária para a 005) · Status: **Aprovada (2026-11-15), não iniciada** · Problemas: P-08, P-09
 
 ## Contexto e problema
 Quem falou é decidido hoje por heurística:

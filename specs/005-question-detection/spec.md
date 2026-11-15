@@ -1,6 +1,6 @@
 # Spec 005 — Detecção de perguntas e deduplicação
 
-Prioridade: **P1** · Status: **Rascunho, aguardando aprovação** · Problemas: P-10, P-11, P-12, P-13, P-15
+Prioridade: **P1** · Status: **Aprovada (2026-11-15), não iniciada** · Problemas: P-10, P-11, P-12, P-13, P-15
 
 ## Contexto e problema
 - **Disparo excessivo:** o agregador chama a IA para quase toda fala (palavras como "como ", "api", "rest", "java"; mínimo de 5 palavras).

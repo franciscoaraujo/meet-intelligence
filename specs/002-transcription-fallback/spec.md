@@ -1,6 +1,6 @@
 # Spec 002 — Fallback de transcrição confiável
 
-Prioridade: **P0** · Status: **Rascunho, aguardando aprovação** · Problemas: P-01, P-06, P-07, P-17 (ver `../000-discovery/diagnostico.md`)
+Prioridade: **P0** · Status: **Implementada (validada com testes automatizados; validação em reunião real pendente)** · Problemas: P-01, P-06, P-07, P-17 (ver `../000-discovery/diagnostico.md`)
 
 ## Contexto e problema
 O fluxo ao vivo descarta a maior parte do áudio do entrevistador. `transcribeLiveTabAudioWithOrgAi()` devolve lista vazia quando todos os provedores falham, e `processAudio()` interpreta isso como sucesso. Por isso o `SpeechToTextRouter` (Deepgram → Whisper) nunca é chamado. Os provedores do roteador, por sua vez, devolvem **transcrições inventadas** quando falham ou não têm chave. Na reunião real, 19 de 24 trechos foram perdidos sem tentativa de fallback.

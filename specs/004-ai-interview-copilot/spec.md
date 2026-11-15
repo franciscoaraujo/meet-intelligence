@@ -1,6 +1,6 @@
 # Spec 004 — Copiloto de entrevistas técnicas
 
-Prioridade: **P1** · Status: **Rascunho, aguardando aprovação** · Problema: P-14
+Prioridade: **P1** · Status: **Aprovada (2026-11-15), não iniciada** · Problema: P-14
 
 ## Contexto e problema
 - **Gatilho errado:** o prompt atual manda gerar uma resposta completa sempre que um conceito técnico for *mencionado*.

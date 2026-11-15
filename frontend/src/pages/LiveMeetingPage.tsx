@@ -23,7 +23,8 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
-import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary } from '../types';
+import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse } from '../types';
+import { describeChunkFailure } from '../features/transcription/chunkStatus';
 
 /**
  * Ordena a transcrição da fala mais antiga para a mais nova.
@@ -77,6 +78,7 @@ export const LiveMeetingPage: React.FC = () => {
   const [micStatus, setMicStatus] = useState<string>('');
   const [tabAudioActive, setTabAudioActive] = useState<boolean>(false);
   const [tabAudioLevel, setTabAudioLevel] = useState<number>(0);
+  const [tabTranscribeError, setTabTranscribeError] = useState<string | null>(null);
   const [manualSpeechInput, setManualSpeechInput] = useState('');
   const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
   const speakerRoleRef = useRef<string>('Francisco Araújo');
@@ -401,14 +403,20 @@ export const LiveMeetingPage: React.FC = () => {
 
           try {
             const base64Audio = encodePcmToWavBase64(chunksToSend, audioCtx.sampleRate);
-            const res = await api.post(`/meetings/${id}/transcripts/chunk`, {
+            const res = await api.post<ChunkTranscriptionResponse>(`/meetings/${id}/transcripts/chunk`, {
               base64Audio,
               mimeType: 'audio/wav',
+              // Id do trecho para reenvio idempotente (spec 002) e origem do áudio
+              clientSegmentId: crypto.randomUUID(),
+              audioSource: 'TAB',
             });
-            if (Array.isArray(res.data) && res.data.length > 0) {
+            // FAILED agora é explícito: mostra o motivo em vez de perder o trecho em silêncio
+            setTabTranscribeError(describeChunkFailure(res.data));
+            const newSegments = res.data.segments ?? [];
+            if (newSegments.length > 0) {
               setTranscripts((prev) => {
                 let next = [...prev];
-                for (const seg of res.data) {
+                for (const seg of newSegments) {
                   if (next.some((s) => s.id === seg.id)) {
                     next = next.map((s) => (s.id === seg.id ? seg : s));
                   } else {
@@ -421,6 +429,7 @@ export const LiveMeetingPage: React.FC = () => {
             }
           } catch (err) {
             console.warn('Erro ao enviar chunk WAV da guia:', err);
+            setTabTranscribeError('Falha de comunicação com o servidor ao enviar um trecho de áudio.');
           } finally {
             isSendingWav = false;
           }
@@ -999,6 +1008,11 @@ export const LiveMeetingPage: React.FC = () => {
                   {tabAudioLevel}%
                 </span>
               </div>
+            </div>
+          )}
+          {tabAudioActive && tabTranscribeError && (
+            <div role="alert" className="px-3.5 py-1.5 border-b border-[#f9dedc] bg-[#fce8e6] text-[11px] text-[#b3261e] shrink-0">
+              {tabTranscribeError}
             </div>
           )}
 

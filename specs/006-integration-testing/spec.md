@@ -1,6 +1,6 @@
 # Spec 006 — Testes automatizados e de integração
 
-Prioridade: **P0** (infraestrutura, pré-requisito de todas) · Status: **Rascunho, aguardando aprovação** · Problemas: P-16, P-19
+Prioridade: **P0** (infraestrutura, pré-requisito de todas) · Status: **Aprovada (2026-11-15), não iniciada** · Problemas: P-16, P-19
 
 ## Contexto e problema
 Faltam testes justamente nas áreas críticas: roteador de STT, fallback, agregador, deduplicação e captura. Um teste existente já falha (`TranscriptionServiceTest.shouldProcessAudioAndSaveSegments`). O frontend não tem executor de testes. Não há forma de validar o pipeline ponta a ponta sem uma reunião real.

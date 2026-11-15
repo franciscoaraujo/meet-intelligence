@@ -80,6 +80,16 @@ docker-compose up -d
   - Paleta clara de alto contraste (`#f8fafd`, `#ffffff`, `#0b57d0`, `#d3e3fd`).
   - Sala de Reunião Ao Vivo dividida em 3 painéis sincronizados via WebSocket STOMP: **Transcrição Auditável**, **Insights Automáticos (Decisões, Tarefas, Resumo)** e **Chat RAG com Citações Verificáveis**.
 
+### Transcrição: cadeia de provedores e flags
+A transcrição ao vivo tenta, nesta ordem, só os provedores com chave: Gemini (organização) → gpt-transcribe (chave OpenAI legada da organização) → Deepgram (`DEEPGRAM_API_KEY`) → gpt-transcribe (`OPENAI_API_KEY`). Cada trecho termina como `TRANSCRIBED`, `NO_SPEECH` ou `FAILED` (nunca texto inventado). Detalhes: `specs/002-transcription-fallback/`.
+
+| Variável | Padrão | Uso |
+|---|---|---|
+| `LOCAL_GOOGLE_STT_ENABLED` | `false` | STT via Python/speech_recognition (endpoint não oficial do Google). Só desenvolvimento. |
+| `SPEECH_SIMULATION_ENABLED` | `false` | Transcrição simulada (`source=SIMULATION`). Só desenvolvimento. |
+
+Testes: `mvn test` no backend (os testes de integração usam Docker/Testcontainers e são pulados sem Docker) e `npm test` no frontend.
+
 ### 4. Exportação Formal de Atas e Governança LGPD
 - Exportação consolidada de atas executivas em **PDF**, **DOCX (Word)** e **TXT**.
 - Conformidade com o **Art. 18 da LGPD (Direito ao Esquecimento)**: exclusão em cascata de mídias no S3, transcrições e embeddings vetoriais no `pgvector`.

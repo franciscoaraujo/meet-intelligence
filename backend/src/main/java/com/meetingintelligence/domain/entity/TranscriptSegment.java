@@ -56,9 +56,22 @@ public class TranscriptSegment {
     @Builder.Default
     private String language = "pt-BR";
 
+    /** Provedor que produziu o texto (GEMINI, DEEPGRAM, OPENAI_TRANSCRIBE, WEB_SPEECH, ...). */
     @Column(nullable = false, length = 50)
     @Builder.Default
     private String source = "DEEPGRAM";
+
+    /** Origem do áudio; nulo em segmentos anteriores à spec 002. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "audio_source", length = 10)
+    private com.meetingintelligence.domain.speech.AudioSource audioSource;
+
+    /** Início/fim no relógio da sessão de captura do cliente (ms); nulo quando o cliente não envia. */
+    @Column(name = "capture_start_ms")
+    private Long captureStartMs;
+
+    @Column(name = "capture_end_ms")
+    private Long captureEndMs;
 
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)

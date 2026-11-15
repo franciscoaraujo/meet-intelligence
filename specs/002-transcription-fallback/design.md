@@ -87,3 +87,16 @@ Inalterado: `/topic/meetings/{id}/transcripts` recebe cada segmento gravado. `NO
 | Idempotência por índice único no PostgreSQL | Redis | Garantia transacional sem nova peça; o Redis existe, mas não é necessário aqui |
 | Simulação por flag | Remover a simulação | Preserva a experiência de desenvolvimento sem chaves, sem risco em produção |
 | Manter `SpeechToTextRouter` como delegador | Apagar | Não remove a funcionalidade nem quebra injeções existentes |
+
+## Mudanças na implementação (2026-11-15)
+Ajustes feitos durante a implementação, com a justificativa de cada um:
+
+| Design original | Implementado | Justificativa |
+|---|---|---|
+| Coluna `client_segment_id` + índice único parcial em `transcript_segments` | Tabela `transcript_ingestions` com `UNIQUE (meeting_id, client_segment_id)` (V7) | Um trecho pode ser **fundido** a um segmento anterior (fusão de falas), então o id do trecho não mapeia 1:1 para um segmento. A tabela registra o resultado de cada trecho (inclusive `NO_SPEECH`/`FAILED`) e permite reprocessar só os que falharam. |
+| `TranscriptionChain` novo + `SpeechToTextRouter` delegador | `SpeechToTextRouter` passou a executar a cadeia; `TranscriptionChainFactory` monta a ordem | Evita uma classe que só repassaria chamadas; o nome já conhecido no código foi mantido |
+| Antiga interface `SpeechToTextProvider` mantida como `@Deprecated` | Removida, junto com `TranscriptionResult` | Sem nenhum uso restante; a simulação embutida (causa do P-06) saiu junto. Nenhuma funcionalidade foi removida. |
+| Resposta com status `TRANSCRIBED / NO_SPEECH / FAILED` | Também `PROCESSING` | Mesmo trecho chegando em paralelo (retry concorrente): o primeiro processamento entrega o resultado pelo WebSocket |
+| `Resilience4j` para retry/timeout | Timeout no `RestTemplate` (`SttHttpClients`) + retry e orçamento no roteador | Regras simples (1 retry só para falhas transitórias + orçamento total), testáveis com relógio controlado; sem configuração adicional |
+| Chave do Gemini na URL (`?key=`) | Cabeçalho `x-goog-api-key` | Evita a chave em logs de requisição |
+| O texto repetido nos últimos 3 segmentos seria tratado só pela spec 005 | Mantido no `/chunk` (`duplicate=true`, nada gravado) | Comportamento existente preservado até a spec 005 substituí-lo |

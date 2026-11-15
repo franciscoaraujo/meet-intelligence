@@ -2,6 +2,8 @@
 
 Pré-requisito: `006-T1` (infraestrutura de testes) e linha de base commitada.
 
+**Status: implementada em 2026-11-15** — todas as tarefas concluídas. Evidência: 61 testes do backend verdes (incluindo `SpeechToTextRouterTest` 13, `SttProvidersTest` 10, `TranscriptionChainFactoryTest` 5, `SttSupportTest` 4, `TranscriptionServiceTest` 8 e `TranscriptionChunkIT` 4 com PostgreSQL real) e 5 testes do frontend. Validação em reunião real: **pendente** (006-T09).
+
 | ID | Tarefa | Depende de | Concluída quando |
 |---|---|---|---|
 | T-01 | Criar `TranscriptionOutcome` (sealed) e `FailureReason` | — | Compila; teste unitário de `switch` exaustivo |
