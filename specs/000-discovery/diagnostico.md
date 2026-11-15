@@ -141,7 +141,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 ### P-15 · P2 — ✅ resolvido pela spec 005 — Concorrência e ordem do processamento assíncrono
 - **Causa raiz:** `@Async` roda no `SimpleAsyncTaskExecutor`, com uma thread por tarefa, sem limite e sem fila (confirmado nos logs: `cTaskExecutor-N`). Blocos da mesma reunião são analisados em paralelo e fora de ordem: o resumo incremental (`version`) sofre condição de corrida.
 
-### P-16 · P2 — Observabilidade insuficiente
+### P-16 · P2 — ⚠️ parcialmente resolvido (métricas e logs sem conteúdo no STT, falantes, perguntas e copiloto; sem correlação ponta a ponta por trace id) — Observabilidade insuficiente
 - **Causa raiz:** logs sem correlação (reunião/segmento/bloco/insight), métricas e status de entrega.
 - **Lacunas:**
   - Não há métricas de latência de STT/LLM nem contagem de áudio perdido.
@@ -154,7 +154,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 ### P-18 · P2 — ✅ resolvido pela spec 001 — Sincronização redundante na tela
 - **Causa raiz:** além do WebSocket, o frontend faz polling a cada 4,5 s e **substitui** insights e transcrições inteiros. Isso compensa eventos perdidos, mas gera tráfego constante e "saltos" visuais. Não existe recuperação incremental após reconexão (ex.: "eventos desde X").
 
-### P-19 · P2 — Ausência de testes nas áreas críticas
+### P-19 · P2 — ✅ resolvido pela spec 006 — Ausência de testes nas áreas críticas
 - **Backend:**
   - Não há testes do `SpeechToTextRouter`, do fallback, do agregador nem de deduplicação.
   - `TranscriptionServiceTest.shouldProcessAudioAndSaveSegments` **já falha** antes de qualquer mudança.

@@ -1,5 +1,7 @@
 # Tasks 006 — Testes
 
+**Status (2026-11-15):** T-01 a T-08 concluídas (`MigrationsIT`, `TranscriptionChunkIT`, `TranscriptionPipelineE2EIT`, dublês de mídia no frontend, `validation-checklist.md`). T-09 (reunião real) pendente — ver `validation-report.md`.
+
 | ID | Tarefa | Depende de | Concluída quando |
 |---|---|---|---|
 | T-01 | Infraestrutura: Vitest + Testing Library + `setup.ts` no frontend; Testcontainers + Awaitility no backend; `npm test`/`mvn test` documentados | Aprovação das dependências | Um teste trivial de cada lado passa; o teste de integração é pulado com aviso sem Docker |
