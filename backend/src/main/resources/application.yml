@@ -95,10 +95,16 @@ app:
     default-provider: ${DEFAULT_LLM_PROVIDER:GEMINI}
     gemini:
       api-key: ${GEMINI_API_KEY:mock-key}
-      model: gemini-1.5-flash
+      model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+    # OpenAI: usada só para transcrição de gravações (gpt-transcribe) e embeddings da busca semântica
     openai:
       api-key: ${OPENAI_API_KEY:mock-key}
-      model: gpt-4o-mini
+    grok:
+      api-key: ${XAI_API_KEY:mock-key}
+      model: ${GROK_MODEL:grok-4.7}
+    claude:
+      api-key: ${ANTHROPIC_API_KEY:mock-key}
+      model: ${CLAUDE_MODEL:claude-opus-5-5}
     deepgram:
       api-key: ${DEEPGRAM_API_KEY:mock-key}
 

@@ -2,6 +2,7 @@ package com.meetingintelligence.infrastructure.speech;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meetingintelligence.domain.ai.AiModels;
 import com.meetingintelligence.domain.speech.SpeechToTextProvider;
 import com.meetingintelligence.domain.speech.TranscriptionResult;
 import com.meetingintelligence.domain.speech.TranscriptionSegmentDto;
@@ -59,16 +60,18 @@ public class OpenAiWhisperSpeechToTextProvider implements SpeechToTextProvider {
             headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
             MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-            body.add("model", "whisper-1");
-            body.add("response_format", "verbose_json");
+            // gpt-transcribe substitui o whisper-1 (descontinuado). Ele usa "languages[]" (lista de dicas de idioma)
+            // no lugar de "language" e responde só com o texto, sem segmentos com horário.
+            body.add("model", AiModels.OPENAI_TRANSCRIBE);
             if (language != null && !language.equalsIgnoreCase("auto")) {
-                body.add("language", language.split("-")[0]); // OpenAI usa formato ISO 'pt', 'en', etc.
+                body.add("languages[]", language.split("-")[0]); // formato ISO: 'pt', 'en'...
             }
 
+            final String fileName = fileNameFor(mimeType);
             ByteArrayResource resource = new ByteArrayResource(audioBytes) {
                 @Override
                 public String getFilename() {
-                    return "recording.webm";
+                    return fileName;
                 }
             };
             body.add("file", resource);
@@ -97,6 +100,15 @@ public class OpenAiWhisperSpeechToTextProvider implements SpeechToTextProvider {
         }
     }
 
+    private static String fileNameFor(String mimeType) {
+        String m = mimeType == null ? "" : mimeType.toLowerCase();
+        if (m.contains("wav")) return "recording.wav";
+        if (m.contains("mpeg") || m.contains("mp3")) return "recording.mp3";
+        if (m.contains("mp4") || m.contains("m4a")) return "recording.m4a";
+        if (m.contains("ogg")) return "recording.ogg";
+        return "recording.webm";
+    }
+
     private TranscriptionResult parseWhisperResponse(String jsonString, String language) {
         try {
             JsonNode root = objectMapper.readTree(jsonString);
@@ -104,6 +116,18 @@ public class OpenAiWhisperSpeechToTextProvider implements SpeechToTextProvider {
             JsonNode segmentsNode = root.path("segments");
 
             List<TranscriptionSegmentDto> segments = new ArrayList<>();
+            if ((!segmentsNode.isArray() || segmentsNode.isEmpty()) && !fullText.isBlank()) {
+                // gpt-transcribe não devolve segmentos: registra a transcrição como um único trecho
+                segments.add(TranscriptionSegmentDto.builder()
+                        .speakerLabel("Falante")
+                        .speakerTag(1)
+                        .text(fullText.trim())
+                        .startTimeMs(0L)
+                        .endTimeMs(0L)
+                        .confidence(BigDecimal.valueOf(0.95))
+                        .language(language)
+                        .build());
+            }
             if (segmentsNode.isArray()) {
                 for (JsonNode s : segmentsNode) {
                     double start = s.path("start").asDouble(0.0);

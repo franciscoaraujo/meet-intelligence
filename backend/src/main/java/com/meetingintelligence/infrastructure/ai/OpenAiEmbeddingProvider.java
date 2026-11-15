@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetingintelligence.domain.ai.EmbeddingProvider;
 import lombok.extern.slf4j.Slf4j;
+import com.meetingintelligence.domain.ai.AiModels;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -60,7 +61,7 @@ public class OpenAiEmbeddingProvider implements EmbeddingProvider {
             headers.setBearerAuth(apiKey);
 
             Map<String, Object> body = Map.of(
-                    "model", "text-embedding-3-small",
+                    "model", AiModels.OPENAI_EMBEDDING,
                     "input", text
             );
 

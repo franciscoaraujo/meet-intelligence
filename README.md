@@ -1,6 +1,6 @@
 # Meet Intelligence — Plataforma SaaS de Inteligência Contínua para Reuniões
 
-O **Meet Intelligence** é uma plataforma SaaS corporativa projetada para capturar, gravar, transcrever, interpretar e analisar reuniões realizadas pelo **Google Meet** e outras fontes de áudio, combinando inteligência artificial automática multi-provedor (**BYOK: Google Gemini, OpenAI GPT e Anthropic Claude**) e assistente interativo em tempo real via **RAG com pgvector**.
+O **Meet Intelligence** é uma plataforma SaaS corporativa projetada para capturar, gravar, transcrever, interpretar e analisar reuniões realizadas pelo **Google Meet** e outras fontes de áudio, combinando inteligência artificial automática multi-provedor (**BYOK: Google Gemini, xAI Grok e Anthropic Claude**) e assistente interativo em tempo real via **RAG com pgvector**.
 
 ---
 
@@ -64,9 +64,11 @@ docker-compose up -d
 
 ### 1. Motor Multi-IA Corporativo com BYOK (Bring Your Own Key)
 - Cada organização pode escolher e configurar sua própria chave de API e modelo preferido em **Configurações**:
-  - **Google Gemini** (`gemini-1.5-flash`, `gemini-1.5-pro`)
-  - **OpenAI GPT** (`gpt-4o-mini`, `gpt-4o`, `gpt-4-turbo`)
-  - **Anthropic Claude** (`claude-3-5-sonnet-20241022`, `claude-3-haiku-20240307`)
+  - **Google Gemini** (`gemini-3.5-flash-lite` padrão, `gemini-4-hydrogen`, `gemini-3.8-flash`)
+  - **xAI Grok** (`grok-4.7` padrão, `grok-4.3`, `grok-4.20-0309-non-reasoning`) via Responses API
+  - **Anthropic Claude** (`claude-opus-5-5` padrão, `claude-sonnet-5-5`, `claude-haiku-5-5`)
+- Transcrição: Deepgram `nova-3` e OpenAI `gpt-transcribe`; embeddings: OpenAI `text-embedding-3-small`.
+- Todos os identificadores ficam centralizados em `backend/.../domain/ai/AiModels.java` (revisado em 2026-11-15).
 - Teste de conectividade e latência em tempo real diretamente pela interface, com fallback automático via Circuit Breaker.
 
 ### 2. Sincronização Estrita com Google Calendar & Google Meet

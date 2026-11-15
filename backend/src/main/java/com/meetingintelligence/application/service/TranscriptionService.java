@@ -2,6 +2,8 @@ package com.meetingintelligence.application.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meetingintelligence.domain.ai.AiModels;
+import com.meetingintelligence.infrastructure.ai.GeminiLlmProvider;
 import com.meetingintelligence.domain.entity.Meeting;
 import com.meetingintelligence.domain.entity.MeetingParticipant;
 import com.meetingintelligence.domain.entity.OrganizationAiConfig;
@@ -118,7 +120,7 @@ public class TranscriptionService {
             try {
                 String model = (cfg.getGeminiModel() != null && !cfg.getGeminiModel().isBlank())
                         ? cfg.getGeminiModel()
-                        : "gemini-1.5-flash";
+                        : AiModels.GEMINI_DEFAULT;
                 String url = String.format(
                         "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s",
                         model, cfg.getGeminiApiKey().trim()
@@ -137,8 +139,7 @@ public class TranscriptionService {
                         "text", "Transcreva fielmente em português do Brasil apenas o que foi falado neste trecho de áudio de reunião. Não adicione comentários nem explicações. Se houver apenas silêncio ou ruído sem fala inteligível, responda exatamente VAZIO."
                 );
                 Map<String, Object> body = Map.of(
-                        "contents", List.of(Map.of("parts", List.of(inlineData, promptPart))),
-                        "generationConfig", Map.of("temperature", 0.0)
+                        "contents", List.of(Map.of("parts", List.of(inlineData, promptPart)))
                 );
 
                 HttpHeaders headers = new HttpHeaders();
@@ -146,12 +147,9 @@ public class TranscriptionService {
                 ResponseEntity<String> res = restTemplate.postForEntity(url, new HttpEntity<>(body, headers), String.class);
                 if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
                     JsonNode root = objectMapper.readTree(res.getBody());
-                    JsonNode candidates = root.path("candidates");
-                    if (candidates.isArray() && !candidates.isEmpty()) {
-                        String text = candidates.get(0).path("content").path("parts").get(0).path("text").asText("").trim();
-                        if (!text.isBlank() && !text.equalsIgnoreCase("VAZIO") && !text.contains("VAZIO")) {
-                            transcribedText = text;
-                        }
+                    String text = GeminiLlmProvider.extractCandidateText(root);
+                    if (!text.isBlank() && !text.equalsIgnoreCase("VAZIO") && !text.contains("VAZIO")) {
+                        transcribedText = text;
                     }
                 }
             } catch (Exception e) {
@@ -159,7 +157,7 @@ public class TranscriptionService {
             }
         }
 
-        // 2. Fallback para OpenAI Whisper (se a chave OpenAI estiver configurada)
+        // 2. Fallback para OpenAI gpt-transcribe (se a chave OpenAI estiver configurada)
         if (transcribedText == null && cfg != null && cfg.getOpenAiApiKey() != null && !cfg.getOpenAiApiKey().isBlank()) {
             try {
                 HttpHeaders headers = new HttpHeaders();
@@ -167,8 +165,8 @@ public class TranscriptionService {
                 headers.setContentType(MediaType.MULTIPART_FORM_DATA);
 
                 MultiValueMap<String, Object> body = new LinkedMultiValueMap<>();
-                body.add("model", "whisper-1");
-                body.add("language", "pt");
+                body.add("model", AiModels.OPENAI_TRANSCRIBE);
+                body.add("languages[]", "pt");
                 ByteArrayResource resource = new ByteArrayResource(audioBytes) {
                     @Override
                     public String getFilename() {
@@ -202,7 +200,7 @@ public class TranscriptionService {
         }
 
         if (transcribedText != null && !transcribedText.isBlank()) {
-            List<TranscriptSegment> existing = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meeting.getId());
+            List<TranscriptSegment> existing = segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meeting.getId());
             String normalizedNew = transcribedText.trim().toLowerCase();
             int checkStart = Math.max(0, existing.size() - 3);
             for (int i = checkStart; i < existing.size(); i++) {
@@ -276,7 +274,7 @@ public class TranscriptionService {
         String cleanText = text != null ? text.trim() : "";
 
         // Verifica se este trecho é continuação de uma fala imediatamente anterior do mesmo locutor (pausa curta na fala)
-        List<TranscriptSegment> existingSegments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        List<TranscriptSegment> existingSegments = segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId);
         if (!existingSegments.isEmpty() && !cleanText.isEmpty()) {
             TranscriptSegment last = existingSegments.get(existingSegments.size() - 1);
             String lastText = last.getOriginalText() != null ? last.getOriginalText().trim() : "";
@@ -420,7 +418,7 @@ public class TranscriptionService {
 
     @Transactional(readOnly = true)
     public List<TranscriptSegment> getTranscriptsByMeeting(UUID meetingId) {
-        return segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        return segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId);
     }
 
     @Transactional

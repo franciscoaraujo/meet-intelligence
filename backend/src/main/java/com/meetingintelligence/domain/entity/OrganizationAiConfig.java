@@ -1,5 +1,6 @@
 package com.meetingintelligence.domain.entity;
 
+import com.meetingintelligence.domain.ai.AiModels;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -27,28 +28,38 @@ public class OrganizationAiConfig {
 
     @Column(name = "active_provider", nullable = false, length = 50)
     @Builder.Default
-    private String activeProvider = "GEMINI"; // GEMINI, OPENAI, CLAUDE
+    private String activeProvider = "GEMINI"; // GEMINI, GROK, CLAUDE
 
     @Column(name = "gemini_api_key", length = 500)
     private String geminiApiKey;
 
     @Column(name = "gemini_model", length = 100)
     @Builder.Default
-    private String geminiModel = "gemini-1.5-flash";
+    private String geminiModel = AiModels.GEMINI_DEFAULT;
 
+    @Column(name = "grok_api_key", length = 500)
+    private String grokApiKey;
+
+    @Column(name = "grok_model", length = 100)
+    @Builder.Default
+    private String grokModel = AiModels.GROK_DEFAULT;
+
+    /**
+     * Chave OpenAI legada: não é mais opção de chat (GPT foi substituído pelo Grok), mas,
+     * se já estiver salva, ainda serve de fallback na transcrição do áudio da aba do Meet.
+     */
     @Column(name = "openai_api_key", length = 500)
     private String openAiApiKey;
 
     @Column(name = "openai_model", length = 100)
-    @Builder.Default
-    private String openAiModel = "gpt-4o-mini";
+    private String openAiModel;
 
     @Column(name = "claude_api_key", length = 500)
     private String claudeApiKey;
 
     @Column(name = "claude_model", length = 100)
     @Builder.Default
-    private String claudeModel = "claude-3-5-sonnet-20241022";
+    private String claudeModel = AiModels.CLAUDE_DEFAULT;
 
     @Column(name = "temperature")
     @Builder.Default

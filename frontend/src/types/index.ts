@@ -50,6 +50,8 @@ export interface TranscriptSegment {
   startTimeMs: number;
   endTimeMs: number;
   confidence?: number;
+  /** Instante real em que a fala foi registrada no servidor; ausente em itens otimistas recém-criados. */
+  createdAt?: string;
 }
 
 export interface AIInsight {

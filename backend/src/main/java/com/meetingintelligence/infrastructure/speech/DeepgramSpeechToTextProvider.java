@@ -2,6 +2,7 @@ package com.meetingintelligence.infrastructure.speech;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meetingintelligence.domain.ai.AiModels;
 import com.meetingintelligence.domain.speech.SpeechToTextProvider;
 import com.meetingintelligence.domain.speech.TranscriptionResult;
 import com.meetingintelligence.domain.speech.TranscriptionSegmentDto;
@@ -53,7 +54,7 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         try {
             String targetLang = (language == null || language.equalsIgnoreCase("auto")) ? "pt-BR" : language;
             String url = String.format(
-                    "https://api.deepgram.com/v1/listen?model=nova-2&language=%s&smart_format=true&diarize=true&punctuate=true",
+                    "https://api.deepgram.com/v1/listen?model=" + AiModels.DEEPGRAM_STT + "&language=%s&smart_format=true&diarize=true&punctuate=true",
                     targetLang
             );
 
@@ -151,7 +152,7 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
         segments.add(TranscriptionSegmentDto.builder()
                 .speakerLabel("Mariana Costa (Engenharia)")
                 .speakerTag(2)
-                .text("Avaliamos o Deepgram Nova-2 para áudio ao vivo e o PostgreSQL com pgvector para busca semântica.")
+                .text("Avaliamos o Deepgram Nova-3 para áudio ao vivo e o PostgreSQL com pgvector para busca semântica.")
                 .startTimeMs(6000L)
                 .endTimeMs(12500L)
                 .confidence(BigDecimal.valueOf(0.96))
@@ -173,7 +174,7 @@ public class DeepgramSpeechToTextProvider implements SpeechToTextProvider {
                 .detectedLanguage(language != null ? language : "pt-BR")
                 .durationMs(18500L)
                 .segments(segments)
-                .fullText("Iniciamos a reunião para avaliar os requisitos de arquitetura e infraestrutura de IA. Avaliamos o Deepgram Nova-2 para áudio ao vivo e o PostgreSQL com pgvector para busca semântica. Excelente. Vamos aprovar essa abordagem e avançar para o pipeline de processamento.")
+                .fullText("Iniciamos a reunião para avaliar os requisitos de arquitetura e infraestrutura de IA. Avaliamos o Deepgram Nova-3 para áudio ao vivo e o PostgreSQL com pgvector para busca semântica. Excelente. Vamos aprovar essa abordagem e avançar para o pipeline de processamento.")
                 .build();
     }
 }

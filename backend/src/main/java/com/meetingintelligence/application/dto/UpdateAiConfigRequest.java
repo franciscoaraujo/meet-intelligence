@@ -11,14 +11,14 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class UpdateAiConfigRequest {
 
-    private String activeProvider; // GEMINI, OPENAI, CLAUDE
+    private String activeProvider; // GEMINI, GROK, CLAUDE
 
     // Chaves opcionais (se vier em branco ou mascarado, mantém o valor atual no banco)
     private String geminiApiKey;
     private String geminiModel;
 
-    private String openAiApiKey;
-    private String openAiModel;
+    private String grokApiKey;
+    private String grokModel;
 
     private String claudeApiKey;
     private String claudeModel;

@@ -36,7 +36,7 @@ public class MeetingMinutesService {
         Optional<MeetingSummary> summaryOpt = summaryRepository.findByMeetingId(meetingId);
         List<MeetingDecision> decisions = decisionRepository.findByMeetingIdOrderByTimestampMsAsc(meetingId);
         List<MeetingTask> tasks = taskRepository.findByMeetingIdOrderByCreatedAtAsc(meetingId);
-        List<TranscriptSegment> segments = transcriptRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        List<TranscriptSegment> segments = transcriptRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId);
 
         List<String> participantNames = participants.stream()
                 .map(p -> p.getName() + (p.getRole() != null ? " (" + p.getRole() + ")" : ""))

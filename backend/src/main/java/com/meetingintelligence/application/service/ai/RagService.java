@@ -113,7 +113,7 @@ public class RagService {
         }
 
         // Complementa com os segmentos ao vivo mais recentes da transcrição para cobertura imediata
-        List<TranscriptSegment> liveSegments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        List<TranscriptSegment> liveSegments = segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId);
         if (!liveSegments.isEmpty()) {
             int startSeg = Math.max(0, liveSegments.size() - 12);
             for (int i = startSeg; i < liveSegments.size(); i++) {

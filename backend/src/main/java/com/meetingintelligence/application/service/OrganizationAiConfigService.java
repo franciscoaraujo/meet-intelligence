@@ -1,5 +1,6 @@
 package com.meetingintelligence.application.service;
 
+import com.meetingintelligence.domain.ai.AiModels;
 import com.meetingintelligence.application.dto.OrganizationAiConfigDto;
 import com.meetingintelligence.application.dto.TestAiConnectionDto;
 import com.meetingintelligence.application.dto.UpdateAiConfigRequest;
@@ -10,7 +11,7 @@ import com.meetingintelligence.domain.entity.Organization;
 import com.meetingintelligence.domain.entity.OrganizationAiConfig;
 import com.meetingintelligence.infrastructure.ai.ClaudeLlmProvider;
 import com.meetingintelligence.infrastructure.ai.GeminiLlmProvider;
-import com.meetingintelligence.infrastructure.ai.OpenAiLlmProvider;
+import com.meetingintelligence.infrastructure.ai.GrokLlmProvider;
 import com.meetingintelligence.infrastructure.persistence.repository.OrganizationAiConfigRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.OrganizationRepository;
 import lombok.RequiredArgsConstructor;
@@ -28,7 +29,7 @@ public class OrganizationAiConfigService {
     private final OrganizationAiConfigRepository aiConfigRepository;
     private final OrganizationRepository organizationRepository;
     private final GeminiLlmProvider geminiProvider;
-    private final OpenAiLlmProvider openAiProvider;
+    private final GrokLlmProvider grokProvider;
     private final ClaudeLlmProvider claudeProvider;
 
     @Transactional(readOnly = true)
@@ -49,7 +50,11 @@ public class OrganizationAiConfigService {
                 });
 
         if (req.getActiveProvider() != null && !req.getActiveProvider().isBlank()) {
-            config.setActiveProvider(req.getActiveProvider().toUpperCase().trim());
+            String provider = req.getActiveProvider().toUpperCase().trim();
+            if (!java.util.Set.of("GEMINI", "GROK", "CLAUDE").contains(provider)) {
+                throw new IllegalArgumentException("Provedor de IA não suportado: " + provider + ". Use GEMINI, GROK ou CLAUDE.");
+            }
+            config.setActiveProvider(provider);
         }
 
         // Atualiza chaves somente se novas (ignora strings que contenham "••••")
@@ -60,11 +65,11 @@ public class OrganizationAiConfigService {
             config.setGeminiModel(req.getGeminiModel().trim());
         }
 
-        if (req.getOpenAiApiKey() != null && !req.getOpenAiApiKey().isBlank() && !req.getOpenAiApiKey().contains("••••")) {
-            config.setOpenAiApiKey(req.getOpenAiApiKey().trim());
+        if (req.getGrokApiKey() != null && !req.getGrokApiKey().isBlank() && !req.getGrokApiKey().contains("••••")) {
+            config.setGrokApiKey(req.getGrokApiKey().trim());
         }
-        if (req.getOpenAiModel() != null && !req.getOpenAiModel().isBlank()) {
-            config.setOpenAiModel(req.getOpenAiModel().trim());
+        if (req.getGrokModel() != null && !req.getGrokModel().isBlank()) {
+            config.setGrokModel(req.getGrokModel().trim());
         }
 
         if (req.getClaudeApiKey() != null && !req.getClaudeApiKey().isBlank() && !req.getClaudeApiKey().contains("••••")) {
@@ -88,15 +93,36 @@ public class OrganizationAiConfigService {
         return mapToDto(saved);
     }
 
-    public TestAiConnectionDto.Response testAiConnection(TestAiConnectionDto.Request req) {
+    @Transactional(readOnly = true)
+    public TestAiConnectionDto.Response testAiConnection(UUID organizationId, TestAiConnectionDto.Request req) {
         String provider = req.getProvider() != null ? req.getProvider().toUpperCase().trim() : "GEMINI";
         String model = req.getModel();
         String apiKey = req.getApiKey();
 
+        // A tela exibe a chave salva mascarada ("sk-ant••••abcd"); testar sem redigitar deve usar a chave real salva
+        if (apiKey == null || apiKey.isBlank() || apiKey.contains("••••")) {
+            apiKey = aiConfigRepository.findByOrganizationId(organizationId)
+                    .map(cfg -> switch (provider) {
+                        case "GROK" -> cfg.getGrokApiKey();
+                        case "CLAUDE" -> cfg.getClaudeApiKey();
+                        default -> cfg.getGeminiApiKey();
+                    })
+                    .orElse(null);
+        }
+        if (apiKey == null || apiKey.isBlank()) {
+            return TestAiConnectionDto.Response.builder()
+                    .success(false)
+                    .provider(provider)
+                    .model(model)
+                    .message("Nenhuma API Key informada ou salva para " + provider + ".")
+                    .latencyMs(0L)
+                    .build();
+        }
+
         log.info("Testando conexão de IA para provedor: {} (Modelo: {})", provider, model);
 
         LLMProvider targetProvider = switch (provider) {
-            case "OPENAI" -> openAiProvider;
+            case "GROK" -> grokProvider;
             case "CLAUDE" -> claudeProvider;
             default -> geminiProvider;
         };
@@ -141,9 +167,9 @@ public class OrganizationAiConfigService {
         OrganizationAiConfig config = OrganizationAiConfig.builder()
                 .organization(org)
                 .activeProvider("GEMINI")
-                .geminiModel("gemini-1.5-flash")
-                .openAiModel("gpt-4o-mini")
-                .claudeModel("claude-3-5-sonnet-20241022")
+                .geminiModel(AiModels.GEMINI_DEFAULT)
+                .grokModel(AiModels.GROK_DEFAULT)
+                .claudeModel(AiModels.CLAUDE_DEFAULT)
                 .temperature(0.20)
                 .useOrganizationKeys(true)
                 .build();
@@ -158,9 +184,9 @@ public class OrganizationAiConfigService {
                 .geminiConfigured(c.getGeminiApiKey() != null && !c.getGeminiApiKey().isBlank())
                 .geminiMaskedKey(OrganizationAiConfigDto.maskApiKey(c.getGeminiApiKey()))
                 .geminiModel(c.getGeminiModel())
-                .openAiConfigured(c.getOpenAiApiKey() != null && !c.getOpenAiApiKey().isBlank())
-                .openAiMaskedKey(OrganizationAiConfigDto.maskApiKey(c.getOpenAiApiKey()))
-                .openAiModel(c.getOpenAiModel())
+                .grokConfigured(c.getGrokApiKey() != null && !c.getGrokApiKey().isBlank())
+                .grokMaskedKey(OrganizationAiConfigDto.maskApiKey(c.getGrokApiKey()))
+                .grokModel(c.getGrokModel())
                 .claudeConfigured(c.getClaudeApiKey() != null && !c.getClaudeApiKey().isBlank())
                 .claudeMaskedKey(OrganizationAiConfigDto.maskApiKey(c.getClaudeApiKey()))
                 .claudeModel(c.getClaudeModel())

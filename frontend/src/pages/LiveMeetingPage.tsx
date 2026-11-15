@@ -25,6 +25,29 @@ import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
 import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary } from '../types';
 
+/**
+ * Ordena a transcrição da fala mais antiga para a mais nova.
+ *
+ * Usa createdAt (instante real do registro no servidor) porque startTimeMs vem de relógios
+ * diferentes (cronômetro da página para o microfone, contagem de segmentos para o áudio da
+ * aba do Meet) e reinicia quando a página é recarregada. startTimeMs serve só de desempate.
+ * Itens sem createdAt (exibição otimista, ainda não confirmada) vão para o fim; o sort é
+ * estável, então entre eles a ordem de chegada é preservada.
+ */
+export const sortTranscriptsChronologically = (segments: TranscriptSegment[]): TranscriptSegment[] => {
+  const timeOf = (s: TranscriptSegment) => {
+    const t = s.createdAt ? Date.parse(s.createdAt) : NaN;
+    return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+  };
+  return [...segments].sort((a, b) => {
+    const ta = timeOf(a);
+    const tb = timeOf(b);
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    if (ta === Number.POSITIVE_INFINITY) return 0;
+    return (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0);
+  });
+};
+
 export const LiveMeetingPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -782,7 +805,11 @@ export const LiveMeetingPage: React.FC = () => {
 
   const formatMs = (ms: number) => formatTime(Math.floor(ms / 1000));
 
-  const filteredTranscripts = transcripts.filter((t) => {
+  // Ordem cronológica: da fala mais antiga para a mais nova (pelo horário real de registro).
+  // Itens ainda sem createdAt (otimistas ou recém-chegados) ficam no fim, na ordem de chegada.
+  const chronologicalTranscripts = sortTranscriptsChronologically(transcripts);
+
+  const filteredTranscripts = chronologicalTranscripts.filter((t) => {
     const text = t.correctedText || t.originalText;
     return text.toLowerCase().includes(searchTerm.toLowerCase());
   });

@@ -120,7 +120,7 @@ public class TranscriptChunkAggregatorService {
         }
 
         // Caso não existam chunks ou todos já tenham sido marcados, consolida os segmentos recentes da transcrição
-        List<TranscriptSegment> segments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
+        List<TranscriptSegment> segments = segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId);
         if (!segments.isEmpty()) {
             StringBuilder sb = new StringBuilder();
             int startSeg = Math.max(0, segments.size() - 10);

@@ -113,7 +113,7 @@ class RagServiceTest {
 
         LLMResponse mockLlmResponse = LLMResponse.builder()
                 .providerName("GEMINI")
-                .modelName("gemini-1.5-flash")
+                .modelName("gemini-3.5-flash-lite")
                 .content("Foi decidido utilizar o PostgreSQL com pgvector para implementar a busca semântica do RAG.")
                 .promptTokens(180)
                 .completionTokens(60)

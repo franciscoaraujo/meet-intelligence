@@ -2,6 +2,7 @@ package com.meetingintelligence.infrastructure.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meetingintelligence.domain.ai.AiModels;
 import com.meetingintelligence.domain.ai.LLMProvider;
 import com.meetingintelligence.domain.ai.LLMRequest;
 import com.meetingintelligence.domain.ai.LLMResponse;
@@ -33,7 +34,7 @@ public class GeminiLlmProvider implements LLMProvider {
 
     public GeminiLlmProvider(
             @Value("${app.ai.gemini.api-key:mock-key}") String apiKey,
-            @Value("${app.ai.gemini.model:gemini-1.5-flash}") String model,
+            @Value("${app.ai.gemini.model:" + AiModels.GEMINI_DEFAULT + "}") String model,
             ObjectMapper objectMapper) {
         this.apiKey = apiKey;
         this.model = model;
@@ -70,7 +71,7 @@ public class GeminiLlmProvider implements LLMProvider {
 
         boolean available = effectiveKey != null && !effectiveKey.isBlank() && !effectiveKey.equals("mock-key");
         if (!available) {
-            log.info("Gemini API Key não configurada. Utilizando simulação de alta precisão do Gemini 1.5 Flash para desenvolvimento local.");
+            log.info("Gemini API Key não configurada. Utilizando simulação local (modo de desenvolvimento).");
             return generateMockResponse(request, startTime);
         }
 
@@ -101,9 +102,9 @@ public class GeminiLlmProvider implements LLMProvider {
                     )
             ));
 
-            // Generation config
+            // Generation config. Nos modelos Gemini 3.x/4 o Google recomenda não enviar temperature/top_p
+            // (os padrões do modelo são calibrados com o raciocínio interno).
             Map<String, Object> genConfig = new HashMap<>();
-            genConfig.put("temperature", request.getTemperature() != null ? request.getTemperature() : 0.2);
             if (request.getMaxTokens() != null) {
                 genConfig.put("maxOutputTokens", request.getMaxTokens());
             }
@@ -117,38 +118,56 @@ public class GeminiLlmProvider implements LLMProvider {
 
             long latencyMs = System.currentTimeMillis() - startTime;
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
-                JsonNode candidates = root.path("candidates");
-                if (candidates.isArray() && candidates.size() > 0) {
-                    String content = candidates.get(0).path("content").path("parts").get(0).path("text").asText();
-
-                    JsonNode usageMetadata = root.path("usageMetadata");
-                    int promptTokens = usageMetadata.path("promptTokenCount").asInt(250);
-                    int completionTokens = usageMetadata.path("candidatesTokenCount").asInt(180);
-                    int totalTokens = usageMetadata.path("totalTokenCount").asInt(promptTokens + completionTokens);
-
-                    // Custo Gemini 1.5 Flash: ~$0.075 / 1M input tokens, ~$0.30 / 1M output tokens
-                    BigDecimal cost = BigDecimal.valueOf((promptTokens * 0.000000075) + (completionTokens * 0.0000003))
-                            .setScale(6, RoundingMode.HALF_UP);
-
-                    return LLMResponse.builder()
-                            .providerName(getProviderName())
-                            .modelName(effectiveModel)
-                            .content(content)
-                            .promptTokens(promptTokens)
-                            .completionTokens(completionTokens)
-                            .totalTokens(totalTokens)
-                            .estimatedCostUsd(cost)
-                            .latencyMs(latencyMs)
-                            .build();
-                }
+            JsonNode root = objectMapper.readTree(response.getBody());
+            String content = extractCandidateText(root);
+            if (content.isBlank()) {
+                String finishReason = root.path("candidates").path(0).path("finishReason").asText("desconhecido");
+                throw new IllegalStateException("Gemini não retornou texto (finishReason=" + finishReason + ").");
             }
-        } catch (Exception e) {
-            log.error("Erro na chamada à Gemini API: {}", e.getMessage(), e);
-        }
 
-        return generateMockResponse(request, startTime);
+            JsonNode usageMetadata = root.path("usageMetadata");
+            int promptTokens = usageMetadata.path("promptTokenCount").asInt(0);
+            // A saída cobrada inclui os tokens de raciocínio (thoughtsTokenCount)
+            int completionTokens = usageMetadata.path("candidatesTokenCount").asInt(0)
+                    + usageMetadata.path("thoughtsTokenCount").asInt(0);
+            int totalTokens = usageMetadata.path("totalTokenCount").asInt(promptTokens + completionTokens);
+
+            return LLMResponse.builder()
+                    .providerName(getProviderName())
+                    .modelName(effectiveModel)
+                    .content(content)
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
+                    .totalTokens(totalTokens)
+                    .estimatedCostUsd(AiModels.estimateCost(effectiveModel, promptTokens, completionTokens))
+                    .latencyMs(latencyMs)
+                    .build();
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            // Erro real da API: propaga para o teste de conexão mostrar a falha e o orquestrador acionar o fallback
+            String detail = e.getResponseBodyAsString();
+            log.error("Erro na chamada à Gemini API ({}): {}", e.getStatusCode().value(), detail);
+            throw new IllegalStateException("Gemini API retornou HTTP " + e.getStatusCode().value() + ": "
+                    + (detail == null || detail.isBlank() ? "sem detalhes" : detail), e);
+        } catch (IllegalStateException e) {
+            throw e;
+        } catch (Exception e) {
+            log.error("Falha ao chamar a Gemini API: {}", e.getMessage(), e);
+            throw new IllegalStateException("Falha ao chamar a Gemini API: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Junta o texto das partes do primeiro candidato, ignorando partes de raciocínio
+     * ({@code "thought": true}) que os modelos Gemini 3.x/4 podem incluir antes da resposta.
+     */
+    public static String extractCandidateText(JsonNode root) {
+        StringBuilder text = new StringBuilder();
+        for (JsonNode part : root.path("candidates").path(0).path("content").path("parts")) {
+            if (!part.path("thought").asBoolean(false) && part.has("text")) {
+                text.append(part.path("text").asText());
+            }
+        }
+        return text.toString().trim();
     }
 
     private LLMResponse generateMockResponse(LLMRequest request, long startTime) {
@@ -401,7 +420,7 @@ public class GeminiLlmProvider implements LLMProvider {
             return """
                 💡 RESPOSTA SUGERIDA (Polimorfismo):
                 Polimorfismo é o pilar da Orientação a Objetos que permite que objetos de classes diferentes respondam à mesma chamada de método de maneiras específicas:
-                • Polimorfismo de Sobrescrita (Override / Runtime): Uma subclasse ou implementação de interface redefine um método da superclasse/interface (ex: diferentes provedores `GeminiLlmProvider` e `OpenAiLlmProvider` implementando `LLMProvider.generateCompletion()`).
+                • Polimorfismo de Sobrescrita (Override / Runtime): Uma subclasse ou implementação de interface redefine um método da superclasse/interface (ex: diferentes provedores `GeminiLlmProvider` e `GrokLlmProvider` implementando `LLMProvider.generateCompletion()`).
                 • Polimorfismo de Sobrecarga (Overload / Compile-time): Métodos com o mesmo nome na mesma classe, mas com assinaturas/parâmetros diferentes.
                 • Vantagem prática: Elimina blocos `if/else` ou `switch` gigantes, permitindo trocar ou adicionar novas implementações sem alterar a classe cliente (Princípio Aberto-Fechado do SOLID).""";
         }
@@ -534,7 +553,7 @@ public class GeminiLlmProvider implements LLMProvider {
         if (lower.contains("design pattern") || lower.contains("padrões de projeto") || lower.contains("padroes de projeto") || lower.contains("strategy") || lower.contains("factory") || lower.contains("singleton")) {
             return """
                 💡 RESPOSTA SUGERIDA (Design Patterns GoF mais usados):
-                • Strategy (Comportamental): Define uma família de algoritmos intercambiáveis (ex: escolher dinamicamente entre Gemini, OpenAI ou Claude via interface `LLMProvider`).
+                • Strategy (Comportamental): Define uma família de algoritmos intercambiáveis (ex: escolher dinamicamente entre Gemini, Grok ou Claude via interface `LLMProvider`).
                 • Factory / Builder (Criacional): Encapsula a criação de objetos complexos de forma legível e segura.
                 • Observer / Pub-Sub (Comportamental): Notifica múltiplos interessados quando um evento ocorre (ex: eventos de transcrição acionando indexação vetorial e extração de insights).
                 • Circuit Breaker / Decorator: Protege chamadas externas contra falhas em cascata.""";

@@ -262,7 +262,7 @@ export const LandingCustomPage: React.FC = () => {
                 <div>
                   <p className="text-xs font-semibold text-[#1f1f1f]">IA Local ou Chave Própria</p>
                   <p className="text-[11px] text-[#444746]">
-                    Rode com Ollama na sua máquina (LGPD) ou use sua chave Gemini/OpenAI.
+                    Rode com Ollama na sua máquina (LGPD) ou use sua chave Gemini/Grok.
                   </p>
                 </div>
               </div>
@@ -631,7 +631,7 @@ export const LandingCustomPage: React.FC = () => {
               </h3>
               <p className="text-xs text-[#d3e3fd] leading-relaxed">
                 Subimos os containers Docker na sua conta AWS, Google Cloud ou Azure e conectamos a
-                sua própria chave corporativa do <strong>Google Gemini, OpenAI ou Anthropic Claude</strong>.
+                sua própria chave corporativa do <strong>Google Gemini, xAI Grok ou Anthropic Claude</strong>.
                 Usuários ilimitados na sua equipe.
               </p>
             </div>
@@ -676,3 +676,4 @@ export const LandingCustomPage: React.FC = () => {
     </div>
   );
 };
+

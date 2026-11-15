@@ -12,7 +12,7 @@ public class TestAiConnectionDto {
     @NoArgsConstructor
     @AllArgsConstructor
     public static class Request {
-        private String provider; // GEMINI, OPENAI, CLAUDE
+        private String provider; // GEMINI, GROK, CLAUDE
         private String apiKey;
         private String model;
     }

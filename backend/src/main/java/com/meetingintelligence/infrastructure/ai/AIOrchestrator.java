@@ -22,7 +22,7 @@ import java.util.Optional;
 public class AIOrchestrator {
 
     private final GeminiLlmProvider geminiProvider;
-    private final OpenAiLlmProvider openAiProvider;
+    private final GrokLlmProvider grokProvider;
     private final ClaudeLlmProvider claudeProvider;
     private final LLMUsageRepository llmUsageRepository;
     private final OrganizationAiConfigRepository aiConfigRepository;
@@ -31,13 +31,13 @@ public class AIOrchestrator {
 
     public AIOrchestrator(
             GeminiLlmProvider geminiProvider,
-            OpenAiLlmProvider openAiProvider,
+            GrokLlmProvider grokProvider,
             ClaudeLlmProvider claudeProvider,
             LLMUsageRepository llmUsageRepository,
             OrganizationAiConfigRepository aiConfigRepository,
             @Value("${app.ai.default-provider:GEMINI}") String defaultProviderName) {
         this.geminiProvider = geminiProvider;
-        this.openAiProvider = openAiProvider;
+        this.grokProvider = grokProvider;
         this.claudeProvider = claudeProvider;
         this.llmUsageRepository = llmUsageRepository;
         this.aiConfigRepository = aiConfigRepository;
@@ -69,9 +69,9 @@ public class AIOrchestrator {
         if (configOpt.isPresent() && Boolean.TRUE.equals(configOpt.get().getUseOrganizationKeys())) {
             OrganizationAiConfig cfg = configOpt.get();
             switch (chosenProvider) {
-                case "OPENAI" -> {
-                    customKey = cfg.getOpenAiApiKey();
-                    customModel = cfg.getOpenAiModel();
+                case "GROK" -> {
+                    customKey = cfg.getGrokApiKey();
+                    customModel = cfg.getGrokModel();
                 }
                 case "CLAUDE" -> {
                     customKey = cfg.getClaudeApiKey();
@@ -109,15 +109,17 @@ public class AIOrchestrator {
     }
 
     private LLMProvider resolveProvider(String providerName) {
-        if ("OPENAI".equalsIgnoreCase(providerName)) return openAiProvider;
+        if ("GROK".equalsIgnoreCase(providerName)) return grokProvider;
         if ("CLAUDE".equalsIgnoreCase(providerName)) return claudeProvider;
         return geminiProvider;
     }
 
+    /**
+     * Fallback: Gemini com a chave global do servidor (sem a chave da organização). Em
+     * desenvolvimento, sem chave global, cai na simulação local, que usa a Base de Conhecimento.
+     */
     private LLMProvider resolveFallbackProvider(String currentProvider) {
-        if ("CLAUDE".equalsIgnoreCase(currentProvider)) return geminiProvider;
-        if ("OPENAI".equalsIgnoreCase(currentProvider)) return geminiProvider;
-        return openAiProvider;
+        return geminiProvider;
     }
 
     private void recordUsage(LLMResponse response, Meeting meeting, String operationType) {
