@@ -2,6 +2,8 @@
 
 Pré-requisitos: `006-T1` (Vitest), spec 002 até `T-08` (contrato do `/chunk`).
 
+**Status (2026-11-15):** T-01 a T-09 concluídas, com 38 testes de frontend novos (`vadSegmenter` 9, `segmentUploader` 7, `audioSource` 8, `webSpeechMicSource` 5, `useCaptureSession` 6, `SourceStatusBadge` 3). Validadas **somente com dublês** de `mediaDevices`/`AudioContext`/`SpeechRecognition`. **Pendente:** T-10 (roteiro em reunião real no Chrome, com e sem fone).
+
 | ID | Tarefa | Depende de | Concluída quando |
 |---|---|---|---|
 | T-01 | `sessionClock.ts` e `wavEncoder.ts` (extraído sem mudar o formato) | 006-T1 | Teste: cabeçalho WAV válido, duração correta, saída idêntica à função atual para a mesma entrada |

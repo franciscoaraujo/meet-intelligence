@@ -71,3 +71,12 @@ O contrato HTTP está definido na spec 002 (`ChunkTranscriptionResponse`).
 | Segmentação no cliente (VAD) | Streaming contínuo | Mantém o endpoint HTTP atual e o custo baixo; streaming fica como evolução |
 | Módulos fora da página | Manter no componente | Testabilidade (RNF-04) e redução da página de 1.414 linhas |
 | Sem reabertura automática da aba | Reabrir sozinho | O navegador exige gesto do usuário para `getDisplayMedia` |
+
+## Mudanças na implementação (2026-11-15)
+| Design original | Implementado | Justificativa |
+|---|---|---|
+| Worklet em arquivo `pcm-capture.worklet.ts` | Código do worklet como string carregado por Blob URL (`PCM_WORKLET_SOURCE`) | Dispensa configuração de build específica para worklets no Vite 8; continua rodando na thread de áudio |
+| `mute` da trilha | Mantém a fonte ativa (`ATIVA_SILENCIO`) com o aviso "Fonte sem sinal (mudo)" | Uma trilha muda continua viva e volta sozinha com `unmute`; tratá-la como interrupção forçaria nova permissão sem necessidade |
+| `AbortError` → `INATIVA` | `NotAllowedError` da **aba** também → `INATIVA` | No Chrome, cancelar o seletor de aba gera `NotAllowedError`; para o microfone continua `PERMISSAO_NEGADA` |
+| Envio de `clientStats` ao backend + métrica `audio.segments.dropped` | **Não implementado** (pendente) | As perdas já aparecem na UI por fonte; a métrica no servidor fica para a etapa de observabilidade |
+| `resolveActiveSpeaker()` (spec 003, RF-05) | Removido já nesta spec | Era parte do código de captura substituído; a fala do microfone passa a ser rotulada com o falante escolhido, sem heurística |

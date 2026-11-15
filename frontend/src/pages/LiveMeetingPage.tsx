@@ -24,7 +24,8 @@ import {
 import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
 import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse } from '../types';
-import { describeChunkFailure } from '../features/transcription/chunkStatus';
+import { useCaptureSession } from '../features/capture/useCaptureSession';
+import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
 
 /**
  * Ordena a transcrição da fala mais antiga para a mais nova.
@@ -54,7 +55,6 @@ export const LiveMeetingPage: React.FC = () => {
   const navigate = useNavigate();
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [wsConnected, setWsConnected] = useState(false);
@@ -74,26 +74,10 @@ export const LiveMeetingPage: React.FC = () => {
   const [chatLoading, setChatLoading] = useState(false);
 
   // Estados de captura de voz ao vivo (Web Speech API + Áudio da Guia do Meet) e envio direto de falas
-  const [interimTranscript, setInterimTranscript] = useState('');
-  const [micStatus, setMicStatus] = useState<string>('');
-  const [tabAudioActive, setTabAudioActive] = useState<boolean>(false);
-  const [tabAudioLevel, setTabAudioLevel] = useState<number>(0);
-  const [tabTranscribeError, setTabTranscribeError] = useState<string | null>(null);
   const [manualSpeechInput, setManualSpeechInput] = useState('');
   const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
   const speakerRoleRef = useRef<string>('Francisco Araújo');
-  const recognitionRef = useRef<any>(null);
-  const isRecordingRef = useRef<boolean>(false);
   const recordingSecondsRef = useRef<number>(0);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const tabStreamRef = useRef<MediaStream | null>(null);
-  const tabAudioCtxRef = useRef<AudioContext | null>(null);
-  const tabIntervalRef = useRef<number | null>(null);
-  const lastTabVoiceMsRef = useRef<number>(0);
-  const interimRef = useRef<string>('');
-  const speechBufferRef = useRef<string>('');
-  const speechBufferSpeakerRef = useRef<string>('Francisco Araújo');
-  const speechFlushTimerRef = useRef<number | null>(null);
 
   // Tabs do Painel Central
   const [activeTab, setActiveTab] = useState<'insights' | 'summary' | 'tasks' | 'decisions'>('insights');
@@ -104,6 +88,29 @@ export const LiveMeetingPage: React.FC = () => {
   const chatContainerRef = useRef<HTMLDivElement | null>(null);
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Sessão de captura (spec 001): aba do Meet e microfone como fontes independentes e identificadas
+  const capture = useCaptureSession({
+    sendChunk: async (payload) =>
+      (await api.post<ChunkTranscriptionResponse>(`/meetings/${id}/transcripts/chunk`, payload)).data,
+    onTranscribed: (segments) => {
+      setTranscripts((prev) => {
+        let next = [...prev];
+        for (const seg of segments) {
+          next = next.some((s) => s.id === seg.id) ? next.map((s) => (s.id === seg.id ? seg : s)) : [...next, seg];
+        }
+        return next;
+      });
+      if (id) setTimeout(() => refreshAiState(id), 1000);
+    },
+    onWebSpeechText: (text) => {
+      void sendLiveSpeechSegment(text, speakerRoleRef.current);
+    },
+    micSpeakerLabel: () => speakerRoleRef.current,
+  });
+  const isRecording = capture.isRecording;
+  const interimTranscript = capture.interim;
+  const tabCaptureOn = capture.tab.state !== 'INATIVA';
 
   useEffect(() => {
     if (id) {
@@ -130,7 +137,11 @@ export const LiveMeetingPage: React.FC = () => {
         (newSummary) => {
           setSummary(newSummary);
         },
-        (connected) => setWsConnected(connected)
+        (connected) => {
+          setWsConnected(connected);
+          // Ao (re)conectar, recupera eventos que possam ter sido perdidos durante a queda
+          if (connected) refreshAiState(id);
+        }
       );
       wsService.connect();
 
@@ -228,7 +239,7 @@ export const LiveMeetingPage: React.FC = () => {
     if (!id) return;
     const syncTimer = window.setInterval(() => {
       refreshAiState(id);
-    }, 4500);
+    }, 30000); // rede de segurança: o tempo real vem do WebSocket (P-18)
     return () => clearInterval(syncTimer);
   }, [id]);
 
@@ -277,188 +288,6 @@ export const LiveMeetingPage: React.FC = () => {
     setSpeakerRole(role);
   };
 
-  const encodePcmToWavBase64 = (chunks: Float32Array[], sampleRate: number): string => {
-    let totalLength = 0;
-    for (const c of chunks) totalLength += c.length;
-
-    const buffer = new ArrayBuffer(44 + totalLength * 2);
-    const view = new DataView(buffer);
-
-    const writeString = (offset: number, str: string) => {
-      for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + totalLength * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true); // PCM chunk size
-    view.setUint16(20, 1, true); // PCM format = 1
-    view.setUint16(22, 1, true); // Mono = 1 channel
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true); // Byte rate
-    view.setUint16(32, 2, true); // Block align
-    view.setUint16(34, 16, true); // 16-bit
-    writeString(36, 'data');
-    view.setUint32(40, totalLength * 2, true);
-
-    let offset = 44;
-    for (const chunk of chunks) {
-      for (let i = 0; i < chunk.length; i++, offset += 2) {
-        const s = Math.max(-1, Math.min(1, chunk[i]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      }
-    }
-
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
-    }
-    return window.btoa(binary);
-  };
-
-  const startTabAudioCapture = async () => {
-    if (!id) return;
-    try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: true,
-        } as any,
-      });
-
-      tabStreamRef.current = displayStream;
-      const audioTracks = displayStream.getAudioTracks();
-
-      if (audioTracks.length === 0) {
-        alert(
-          'Atenção: Você precisa marcar a caixinha "Compartilhar também o áudio da guia" (Share tab audio) ao selecionar a aba do Google Meet para capturar a voz do entrevistador na outra máquina.'
-        );
-      } else {
-        setTabAudioActive(true);
-        const audioOnlyStream = new MediaStream(audioTracks);
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        const audioCtx: AudioContext = new AudioCtx({ sampleRate: 16000 });
-        tabAudioCtxRef.current = audioCtx;
-
-        const source = audioCtx.createMediaStreamSource(audioOnlyStream);
-        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-        const zeroGain = audioCtx.createGain();
-        zeroGain.gain.value = 0;
-
-        let pcmChunks: Float32Array[] = [];
-        let hasVoiceInWindow = false;
-
-        processor.onaudioprocess = (e) => {
-          const input = e.inputBuffer.getChannelData(0);
-          let sumSq = 0;
-          for (let i = 0; i < input.length; i++) {
-            sumSq += input[i] * input[i];
-          }
-          const rms = Math.sqrt(sumSq / input.length);
-          const pct = Math.min(100, Math.round(rms * 350));
-          setTabAudioLevel(pct);
-
-          if (rms > 0.008) {
-            hasVoiceInWindow = true;
-            lastTabVoiceMsRef.current = Date.now();
-          }
-          pcmChunks.push(new Float32Array(input));
-        };
-
-        source.connect(processor);
-        processor.connect(zeroGain);
-        zeroGain.connect(audioCtx.destination);
-
-        let isSendingWav = false;
-        const flushTabWavChunk = async () => {
-          if (!tabStreamRef.current || audioOnlyStream.getAudioTracks()[0]?.readyState !== 'live') {
-            setTabAudioActive(false);
-            setTabAudioLevel(0);
-            return;
-          }
-          if (isSendingWav) return;
-          if (!hasVoiceInWindow) {
-            if (pcmChunks.length > 10) pcmChunks = pcmChunks.slice(-6);
-            return;
-          }
-
-          // Aguarda a pessoa terminar a frase (1.5s de silêncio após falar) ou limite máximo de ~11s contínuos
-          const silenceAfterVoiceMs = Date.now() - lastTabVoiceMsRef.current;
-          const reachedMaxBuffer = pcmChunks.length >= 44;
-          if (silenceAfterVoiceMs < 1500 && !reachedMaxBuffer) {
-            return;
-          }
-
-          const chunksToSend = pcmChunks;
-          pcmChunks = [];
-          hasVoiceInWindow = false;
-          isSendingWav = true;
-
-          try {
-            const base64Audio = encodePcmToWavBase64(chunksToSend, audioCtx.sampleRate);
-            const res = await api.post<ChunkTranscriptionResponse>(`/meetings/${id}/transcripts/chunk`, {
-              base64Audio,
-              mimeType: 'audio/wav',
-              // Id do trecho para reenvio idempotente (spec 002) e origem do áudio
-              clientSegmentId: crypto.randomUUID(),
-              audioSource: 'TAB',
-            });
-            // FAILED agora é explícito: mostra o motivo em vez de perder o trecho em silêncio
-            setTabTranscribeError(describeChunkFailure(res.data));
-            const newSegments = res.data.segments ?? [];
-            if (newSegments.length > 0) {
-              setTranscripts((prev) => {
-                let next = [...prev];
-                for (const seg of newSegments) {
-                  if (next.some((s) => s.id === seg.id)) {
-                    next = next.map((s) => (s.id === seg.id ? seg : s));
-                  } else {
-                    next.push(seg);
-                  }
-                }
-                return next;
-              });
-              setTimeout(() => refreshAiState(id), 1000);
-            }
-          } catch (err) {
-            console.warn('Erro ao enviar chunk WAV da guia:', err);
-            setTabTranscribeError('Falha de comunicação com o servidor ao enviar um trecho de áudio.');
-          } finally {
-            isSendingWav = false;
-          }
-        };
-
-        tabIntervalRef.current = window.setInterval(flushTabWavChunk, 800);
-      }
-
-      displayStream.getVideoTracks()[0].onended = () => {
-        setTabAudioActive(false);
-        setTabAudioLevel(0);
-        if (tabIntervalRef.current) clearInterval(tabIntervalRef.current);
-        if (tabAudioCtxRef.current) {
-          tabAudioCtxRef.current.close().catch(() => {});
-          tabAudioCtxRef.current = null;
-        }
-      };
-
-      // Garante que o SpeechRecognition do microfone continue ativo após fechar o modal de compartilhamento
-      if (isRecordingRef.current) {
-        setTimeout(() => startBrowserSpeechRecognition(), 300);
-      }
-    } catch (err) {
-      console.warn('Compartilhamento de guia cancelado:', err);
-      if (isRecordingRef.current) {
-        setTimeout(() => startBrowserSpeechRecognition(), 300);
-      }
-    }
-  };
   const handleManualSpeechSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualSpeechInput.trim()) return;
@@ -467,194 +296,18 @@ export const LiveMeetingPage: React.FC = () => {
     await sendLiveSpeechSegment(text, speakerRoleRef.current);
   };
 
-  const resolveActiveSpeaker = (): string => {
-    // Se a guia do Google Meet emitiu voz nos últimos 2.4 segundos, a fala veio da outra máquina (Entrevistador)
-    if (Date.now() - lastTabVoiceMsRef.current < 2400) {
-      return 'Entrevistador (Google Meet)';
-    }
-    return speakerRoleRef.current;
-  };
-
-  const scheduleSpeechBufferFlush = (delayMs = 2200) => {
-    if (speechFlushTimerRef.current) {
-      window.clearTimeout(speechFlushTimerRef.current);
-      speechFlushTimerRef.current = null;
-    }
-    speechFlushTimerRef.current = window.setTimeout(() => {
-      // Se a pessoa ainda estiver no meio de uma palavra (interim ativo), aguarda mais 1.1s para não cortar a frase
-      if (interimRef.current && interimRef.current.trim().length > 0) {
-        scheduleSpeechBufferFlush(1100);
-        return;
-      }
-      const fullSentence = speechBufferRef.current.trim();
-      if (fullSentence.length > 0) {
-        speechBufferRef.current = '';
-        setInterimTranscript('');
-        sendLiveSpeechSegment(fullSentence, speechBufferSpeakerRef.current);
-      }
-    }, delayMs);
-  };
-
-  const startBrowserSpeechRecognition = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setMicStatus('Navegador sem suporte a Web Speech API (use Google Chrome ou Edge).');
-      return;
-    }
-
-    try {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.onend = null;
-          recognitionRef.current.stop();
-        } catch (e) {}
-      }
-
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'pt-BR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
-
-      recognition.onstart = () => {
-        setMicStatus(
-          'Microfone ativo (aguarda pausa de 2.2s para consolidar a pergunta inteira sem partir)...'
-        );
-      };
-
-      recognition.onresult = (event: any) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const transcriptPiece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            const cleanPiece = transcriptPiece.trim();
-            if (cleanPiece) {
-              speechBufferSpeakerRef.current = resolveActiveSpeaker();
-              speechBufferRef.current = speechBufferRef.current
-                ? `${speechBufferRef.current} ${cleanPiece}`
-                : cleanPiece;
-            }
-            interimRef.current = '';
-          } else {
-            interim += transcriptPiece;
-          }
-        }
-        interimRef.current = interim;
-        const combinedPreview = [speechBufferRef.current, interim.trim()].filter(Boolean).join(' ').trim();
-        setInterimTranscript(combinedPreview);
-
-        if (combinedPreview.length > 0) {
-          scheduleSpeechBufferFlush(2200);
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        console.warn('Evento SpeechRecognition:', event.error);
-        if (event.error === 'not-allowed') {
-          setMicStatus('Permissão de microfone negada no navegador. Libere o cadeado ao lado da URL.');
-        } else if (event.error === 'no-speech') {
-          setMicStatus('Escuta ativa — aguardando fala do entrevistador ou sua...');
-        }
-      };
-
-      // Reinicia automaticamente a escuta contínua sem quebrar frases em andamento
-      recognition.onend = () => {
-        if (interimRef.current && interimRef.current.trim()) {
-          const pending = interimRef.current.trim();
-          interimRef.current = '';
-          speechBufferSpeakerRef.current = resolveActiveSpeaker();
-          speechBufferRef.current = speechBufferRef.current
-            ? `${speechBufferRef.current} ${pending}`
-            : pending;
-          setInterimTranscript(speechBufferRef.current);
-          scheduleSpeechBufferFlush(1800);
-        }
-        if (isRecordingRef.current) {
-          setTimeout(() => {
-            if (isRecordingRef.current) {
-              try {
-                recognition.start();
-              } catch (e) {}
-            }
-          }, 150);
-        }
-      };
-
-      recognition.start();
-      recognitionRef.current = recognition;
-    } catch (err) {
-      console.warn('Reconhecimento de voz nativo não iniciado:', err);
-    }
-  };
-
   const toggleRecording = async () => {
-    if (!isRecording) {
-      try {
-        // Desativa echoCancellation para que o microfone também capte a voz do entrevistador saindo na caixa de som do PC
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: true,
-            },
-          });
-          micStreamRef.current = micStream;
-        }
-      } catch (micErr) {
-        console.warn('Aviso ao solicitar getUserMedia:', micErr);
-      }
-
+    if (!capture.isRecording) {
       await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`).catch(() => {});
-      isRecordingRef.current = true;
-      setIsRecording(true);
-      startBrowserSpeechRecognition();
+      await capture.startRecording();
     } else {
-      stopRecording();
+      await stopRecording();
     }
   };
 
+  /** Encerra todas as fontes (enviando os trechos pendentes) e consolida a reunião com IA. */
   const stopRecording = async () => {
-    isRecordingRef.current = false;
-    setIsRecording(false);
-    setTabAudioActive(false);
-    setTabAudioLevel(0);
-    if (speechFlushTimerRef.current) {
-      window.clearTimeout(speechFlushTimerRef.current);
-      speechFlushTimerRef.current = null;
-    }
-    const finalBuffered = [speechBufferRef.current, interimRef.current].filter(Boolean).join(' ').trim();
-    speechBufferRef.current = '';
-    interimRef.current = '';
-    setInterimTranscript('');
-    setMicStatus('');
-    if (finalBuffered) {
-      sendLiveSpeechSegment(finalBuffered, speechBufferSpeakerRef.current);
-    }
-    if (tabIntervalRef.current) {
-      clearInterval(tabIntervalRef.current);
-      tabIntervalRef.current = null;
-    }
-    if (tabAudioCtxRef.current) {
-      tabAudioCtxRef.current.close().catch(() => {});
-      tabAudioCtxRef.current = null;
-    }
-    if (tabStreamRef.current) {
-      tabStreamRef.current.getTracks().forEach((t) => t.stop());
-      tabStreamRef.current = null;
-    }
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onend = null;
-        recognitionRef.current.stop();
-      } catch (e) {}
-      recognitionRef.current = null;
-    }
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
-    }
+    await capture.stopRecording();
     if (id) {
       await api.patch(`/meetings/${id}/status?status=COMPLETED`).catch(() => {});
       triggerAiAnalysis();
@@ -665,12 +318,6 @@ export const LiveMeetingPage: React.FC = () => {
     if (!id || analyzing) return;
     try {
       setAnalyzing(true);
-      if (interimRef.current && interimRef.current.trim()) {
-        const pending = interimRef.current.trim();
-        interimRef.current = '';
-        setInterimTranscript('');
-        await sendLiveSpeechSegment(pending, speakerRoleRef.current);
-      }
       await api.post(`/meetings/${id}/insights/trigger`);
       setTimeout(() => refreshAiState(id), 1200);
     } catch (err) {
@@ -885,17 +532,27 @@ export const LiveMeetingPage: React.FC = () => {
           </button>
 
           <button
-            onClick={startTabAudioCapture}
+            onClick={() => (tabCaptureOn ? capture.stopTab() : capture.startTab())}
             className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${
-              tabAudioActive ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
+              tabCaptureOn ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
             }`}
-            title="Compartilhar o áudio interno da aba do Google Meet para capturar a voz do entrevistador mesmo usando fone de ouvido"
+            title="Compartilhar o áudio da aba do Google Meet (marque 'Compartilhar áudio da guia') para capturar a voz do entrevistador"
           >
             <Volume2 className="w-3.5 h-3.5" />
-            <span>
-              {tabAudioActive ? 'Áudio da Guia Meet Conectado' : 'Capturar Áudio da Guia Meet'}
-            </span>
+            <span>{tabCaptureOn ? 'Parar captura da aba' : 'Capturar Áudio da Guia Meet'}</span>
           </button>
+
+          <select
+            value={capture.micMode}
+            onChange={(e) => capture.setMicMode(e.target.value as 'BACKEND' | 'WEB_SPEECH')}
+            disabled={isRecording}
+            className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f] disabled:opacity-60"
+            title="Como transcrever o seu microfone"
+            aria-label="Modo de transcrição do microfone"
+          >
+            <option value="BACKEND">Microfone: transcrição do servidor</option>
+            <option value="WEB_SPEECH">Microfone: reconhecimento do navegador (Google)</option>
+          </select>
 
           <button
             onClick={triggerAiAnalysis}
@@ -990,42 +647,28 @@ export const LiveMeetingPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Medidor em Tempo Real do Áudio Vindo da Guia do Google Meet (Outra Máquina) */}
-          {tabAudioActive && (
-            <div className="px-3.5 py-1.5 border-b border-[#c4eed0] bg-[#e6f4ea] flex items-center justify-between gap-3 shrink-0">
-              <span className="text-[11px] font-semibold text-[#137333] flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#137333] animate-pulse" />
-                Áudio da Guia Meet (Entrevistador na outra máquina):
-              </span>
-              <div className="flex items-center gap-2 w-36">
-                <div className="flex-1 h-2 bg-white rounded-full overflow-hidden border border-[#c4eed0]">
-                  <div
-                    className="h-full bg-[#137333] transition-all duration-100"
-                    style={{ width: `${Math.max(4, tabAudioLevel)}%` }}
-                  />
-                </div>
-                <span className="text-[10px] font-mono font-bold text-[#137333] w-8 text-right">
-                  {tabAudioLevel}%
-                </span>
-              </div>
-            </div>
+          {/* Estado de cada fonte de áudio (spec 001, RF-04/RF-11) */}
+          {(isRecording || capture.mic.state !== 'INATIVA') && <SourceStatusBadge kind="MIC" view={capture.mic} />}
+          {tabCaptureOn && (
+            <SourceStatusBadge
+              kind="TAB"
+              view={capture.tab}
+              onRetry={() => capture.startTab()}
+              retryLabel="Compartilhar aba novamente"
+            />
           )}
-          {tabAudioActive && tabTranscribeError && (
-            <div role="alert" className="px-3.5 py-1.5 border-b border-[#f9dedc] bg-[#fce8e6] text-[11px] text-[#b3261e] shrink-0">
-              {tabTranscribeError}
+          {capture.overlapWarning && (
+            <div role="status" className="px-3.5 py-1.5 border-b border-[#fde293] bg-[#fef7e0] text-[11px] text-[#5f4300] flex items-center justify-between gap-2 shrink-0">
+              <span>
+                Seu microfone está captando a voz da reunião ao mesmo tempo que a aba. Use fone de ouvido para evitar transcrição duplicada.
+              </span>
+              <button type="button" onClick={capture.dismissOverlapWarning} className="font-semibold cursor-pointer">
+                OK
+              </button>
             </div>
           )}
 
           <div ref={transcriptContainerRef} className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
-            {isRecording && micStatus && (
-              <div className="px-3.5 py-2 rounded-xl bg-[#e6f4ea] border border-[#c4eed0] text-[#146c2e] text-xs font-medium flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-[#146c2e] animate-ping" />
-                  {micStatus}
-                </span>
-                <span className="text-[10px] uppercase font-semibold">PT-BR</span>
-              </div>
-            )}
             {filteredTranscripts.length === 0 ? (
               <div className="text-center py-12 text-[#444746] text-xs">
                 Nenhum áudio transcrito ainda. Inicie a captura ou envie um arquivo de mídia para começar.

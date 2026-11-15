@@ -68,7 +68,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 - **Arquivos:** `TranscriptionService.java:47-226`, `SpeechToTextRouter.java:21-31`.
 - **Impacto:** perda silenciosa da fala do entrevistador, que é justamente a entrada do copiloto.
 
-### P-02 · P0 — Áudio do microfone capturado não é processado
+### P-02 · P0 — ✅ resolvido pela spec 001 — Áudio do microfone capturado não é processado
 - **Causa raiz:** `getUserMedia` (linhas 586-594) abre o microfone com `echoCancellation:false`, mas o stream só é guardado em `micStreamRef` e fechado no fim. A transcrição do microfone vem da **Web Speech API**, que faz uma captura própria e independente, sem as configurações pedidas e sem passar pelo backend. São dois fluxos que não se falam.
 - **Impacto:**
   1. Depende do Chrome/Edge e do serviço do Google.
@@ -76,15 +76,15 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
   3. O `onend` reinicia o reconhecimento a cada 150 ms indefinidamente, inclusive após erros `network`/`audio-capture` não tratados.
   4. Na reunião real, nenhum segmento do microfone foi gravado.
 
-### P-03 · P1 — Encerramento e interrupção de fonte mal detectados
+### P-03 · P1 — ✅ resolvido pela spec 001 — Encerramento e interrupção de fonte mal detectados
 - **Causa raiz:** só `getVideoTracks()[0].onended` é tratado (linha 432). O fim da trilha de áudio é detectado apenas pelo polling de 800 ms (linha 379), que marca a fonte como inativa **sem limpar o intervalo nem fechar o `AudioContext`**. Não há eventos para o microfone (`ended`, `devicechange`, `mute`), nem recuperação.
 - **Impacto:** o indicador de "ativo" fica incorreto, com vazamento de recursos e sem caminho de recuperação para o usuário.
 
-### P-04 · P1 — Perda de segmentos de áudio na captura
+### P-04 · P1 — ✅ resolvido pela spec 001 — Perda de segmentos de áudio na captura
 - **Causa raiz:** se o `POST /chunk` falha, o áudio já saiu do buffer (`pcmChunks = []`) e é descartado (linhas 397-426), sem retry e sem fila. Não existe identificador do trecho para reenvio idempotente.
 - **Impacto:** perda de fala durante instabilidade de rede ou do backend.
 
-### P-05 · P2 — `ScriptProcessorNode` obsoleto na thread principal
+### P-05 · P2 — ✅ resolvido pela spec 001 — `ScriptProcessorNode` obsoleto na thread principal
 - **Causa raiz:** `createScriptProcessor(4096,1,1)` (linha 349) é API descontinuada e roda na thread de UI, que também faz `setTabAudioLevel` a cada ~256 ms e re-renderiza a página de 1.414 linhas.
 - **Impacto:** risco de áudio picotado sob carga e de remoção futura pelo navegador.
 
@@ -151,7 +151,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 ### P-17 · P2 — ✅ resolvido pela spec 002 — STT local via Python sem controle
 - **Causa raiz:** `transcribeWavViaLocalGoogleStt` cria um processo `python` por trecho, usando `recognize_google`: endpoint não oficial, sem SLA, com envio do áudio ao Google. A saída padrão é mesclada ao `stderr` (`redirectErrorStream(true)`), então avisos do Python podem virar "transcrição" (só `Traceback` é filtrado). Foi o provedor efetivamente usado na reunião real, com baixa qualidade em termos técnicos.
 
-### P-18 · P2 — Sincronização redundante na tela
+### P-18 · P2 — ✅ resolvido pela spec 001 — Sincronização redundante na tela
 - **Causa raiz:** além do WebSocket, o frontend faz polling a cada 4,5 s e **substitui** insights e transcrições inteiros. Isso compensa eventos perdidos, mas gera tráfego constante e "saltos" visuais. Não existe recuperação incremental após reconexão (ex.: "eventos desde X").
 
 ### P-19 · P2 — Ausência de testes nas áreas críticas

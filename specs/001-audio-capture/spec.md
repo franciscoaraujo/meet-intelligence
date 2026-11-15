@@ -1,6 +1,6 @@
 # Spec 001 — Captura de áudio (aba do Meet e microfone)
 
-Prioridade: **P0** (processamento do microfone) / **P2** (experiência) · Status: **Aprovada (2026-11-15), não iniciada** · Problemas: P-02, P-03, P-04, P-05, P-09
+Prioridade: **P0** (processamento do microfone) / **P2** (experiência) · Status: **Implementada (validada com dublês; validação em reunião real pendente)** · Problemas: P-02, P-03, P-04, P-05, P-09
 
 ## Contexto e problema
 - **Microfone:** é aberto com `getUserMedia`, mas esse áudio não é processado. A voz do candidato vem de uma captura separada da Web Speech API, que também ouve o entrevistador pelo alto-falante e duplica a fala dele.

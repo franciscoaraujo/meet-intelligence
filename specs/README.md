@@ -4,7 +4,7 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 
 | Spec | Tema | Prioridade | Status |
 |---|---|---|---|
-| [001](001-audio-capture/spec.md) | Captura de áudio (aba do Meet e microfone) | P0 / P2 | Aprovada, não iniciada |
+| [001](001-audio-capture/spec.md) | Captura de áudio (aba do Meet e microfone) | P0 / P2 | **Implementada** (dublês; reunião real pendente) |
 | [002](002-transcription-fallback/spec.md) | Fallback de transcrição | P0 | **Implementada** (testes automatizados; reunião real pendente) |
 | [003](003-speaker-identification/spec.md) | Identificação de falantes | P2 (base da 005) | Aprovada, não iniciada |
 | [004](004-ai-interview-copilot/spec.md) | Copiloto de entrevistas | P1 | Aprovada, não iniciada |
