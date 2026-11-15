@@ -174,6 +174,19 @@ public class GeminiLlmProvider implements LLMProvider {
         long latency = Math.max(System.currentTimeMillis() - startTime, 120L);
         String userPrompt = request.getUserPrompt() != null ? request.getUserPrompt() : "";
 
+        if (request.getSystemPrompt() != null && request.getSystemPrompt().startsWith(COPILOT_PROMPT_MARKER)) {
+            return LLMResponse.builder()
+                    .providerName(getProviderName())
+                    .modelName("simulacao-local")
+                    .content(buildCopilotSimulation(userPrompt))
+                    .promptTokens(0)
+                    .completionTokens(0)
+                    .totalTokens(0)
+                    .estimatedCostUsd(BigDecimal.ZERO)
+                    .latencyMs(latency)
+                    .build();
+        }
+
         if (request.isJsonMode()) {
             String jsonContent = buildContextualJsonAnalysis(userPrompt);
             return LLMResponse.builder()
@@ -276,7 +289,7 @@ public class GeminiLlmProvider implements LLMProvider {
                     } else if (technicalAnswer != null) {
                         answerToDisplay = kbAnswer != null ? technicalAnswer + "\n\n" + kbAnswer : technicalAnswer;
                     } else {
-                        answerToDisplay = fetchWikipediaSummaryPtBr(speech);
+                        answerToDisplay = buildStructuredTechnicalFallback(speech);
                     }
                     if (answerToDisplay == null || answerToDisplay.isBlank()) {
                         answerToDisplay = buildStructuredTechnicalFallback(speech);
@@ -369,11 +382,6 @@ public class GeminiLlmProvider implements LLMProvider {
         String techFromContext = solveTechnicalQuestion(context);
         if (techFromContext != null && (question.toLowerCase().contains("responda") || question.toLowerCase().contains("pergunta") || question.toLowerCase().contains("ajude") || question.toLowerCase().contains("explique"))) {
             return techFromContext;
-        }
-
-        String wikiFallback = fetchWikipediaSummaryPtBr(question);
-        if (wikiFallback != null) {
-            return wikiFallback;
         }
 
         if (context.isBlank() || context.contains("Nenhum trecho relevante localizado")) {
@@ -748,47 +756,66 @@ public class GeminiLlmProvider implements LLMProvider {
         return sb.toString().trim();
     }
 
-    private String fetchWikipediaSummaryPtBr(String rawQuery) {
-        if (rawQuery == null || rawQuery.isBlank()) return null;
-        try {
-            String cleaned = rawQuery.toLowerCase()
-                    .replaceAll("(?i)(explique|para mim|o que é|o que e|por que|porque|qual a diferença entre|qual a diferenca entre|qual a|quais|me fale sobre|fale sobre|conceito de|responda|pergunta|entrevistador|:|\\?|!|\\.)", " ")
-                    .replaceAll("\\s+", " ")
-                    .trim();
-            if (cleaned.length() < 3) return null;
+    /** Primeira linha do prompt do copiloto (prompts/interview-answer.v1.md). */
+    static final String COPILOT_PROMPT_MARKER = "INTERVIEW_COPILOT_V1";
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "MeetIntelligenceCopilot/1.0 (https://github.com/franciscoaraujo/meet-intelligence)");
-            HttpEntity<Void> reqEntity = new HttpEntity<>(headers);
-
-            String searchUrl = "https://pt.wikipedia.org/w/api.php?action=query&list=search&srsearch="
-                    + java.net.URLEncoder.encode(cleaned, java.nio.charset.StandardCharsets.UTF_8)
-                    + "&utf8=1&format=json&srlimit=1";
-
-            ResponseEntity<String> searchRes = restTemplate.exchange(searchUrl, org.springframework.http.HttpMethod.GET, reqEntity, String.class);
-            if (searchRes.getStatusCode().is2xxSuccessful() && searchRes.getBody() != null) {
-                JsonNode searchRoot = objectMapper.readTree(searchRes.getBody());
-                JsonNode searchArr = searchRoot.path("query").path("search");
-                if (searchArr.isArray() && !searchArr.isEmpty()) {
-                    String pageTitle = searchArr.get(0).path("title").asText("");
-                    if (!pageTitle.isBlank()) {
-                        String summaryUrl = "https://pt.wikipedia.org/api/rest_v1/page/summary/"
-                                + java.net.URLEncoder.encode(pageTitle.replace(" ", "_"), java.nio.charset.StandardCharsets.UTF_8);
-                        ResponseEntity<String> sumRes = restTemplate.exchange(summaryUrl, org.springframework.http.HttpMethod.GET, reqEntity, String.class);
-                        if (sumRes.getStatusCode().is2xxSuccessful() && sumRes.getBody() != null) {
-                            JsonNode sumRoot = objectMapper.readTree(sumRes.getBody());
-                            String extract = sumRoot.path("extract").asText("").trim();
-                            if (!extract.isBlank()) {
-                                return "💡 RESPOSTA SUGERIDA (" + pageTitle + "):\n" + extract;
-                            }
-                        }
-                    }
-                }
-            }
-        } catch (Exception e) {
-            log.debug("Fallback Wikipedia não retornou para '{}': {}", rawQuery, e.getMessage());
+    /**
+     * Resposta simulada do copiloto (sem chave de IA): monta o contrato JSON a partir das respostas
+     * técnicas locais e da Base de Conhecimento, com "simulated": true. Nenhuma chamada externa.
+     */
+    String buildCopilotSimulation(String userPrompt) {
+        String question = "";
+        int qStart = userPrompt.indexOf("<question");
+        int qEnd = userPrompt.indexOf("</question>");
+        if (qStart != -1 && qEnd > qStart) {
+            question = userPrompt.substring(userPrompt.indexOf('>', qStart) + 1, qEnd).trim();
         }
-        return null;
+        String tech = solveTechnicalQuestion(question);
+        String kb = answerFromKnowledgeBase(userPrompt, question);
+        String technicalText = tech != null ? cleanSimulationText(tech) : cleanSimulationText(buildStructuredTechnicalFallback(question));
+        String resumeText = kb != null ? cleanSimulationText(kb) : null;
+
+        String spoken = limitWords(isPersonalQuestion(question) && resumeText != null
+                ? resumeText + " " + technicalText : technicalText + (resumeText != null ? " " + resumeText : ""), 130);
+        String firstSentence = technicalText.split("(?<=[.!?])\\s+")[0];
+
+        Map<String, Object> sections = new HashMap<>();
+        sections.put("direct_answer", firstSentence);
+        sections.put("technical_explanation", technicalText);
+        sections.put("practical_example", resumeText != null ? resumeText
+                : "Exemplo: aplicar o conceito num serviço Spring Boot e validar o comportamento com testes automatizados.");
+        sections.put("trade_offs", "Avalie custo de complexidade, desempenho e manutenção antes de adotar a solução.");
+
+        Map<String, Object> root = new HashMap<>();
+        root.put("is_question_for_candidate", true);
+        root.put("depth", "INTERMEDIATE");
+        root.put("spoken_answer", spoken);
+        root.put("sections", sections);
+        root.put("resume_facts_used", resumeText != null ? List.of(limitWords(resumeText, 40)) : List.of());
+        root.put("assumptions", List.of("Resposta gerada pela simulação local, sem modelo de IA. Configure uma API Key para respostas redigidas."));
+        root.put("confidence", 0.5);
+        root.put("simulated", true);
+        try {
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            return "{\"is_question_for_candidate\":false,\"simulated\":true}";
+        }
+    }
+
+    /** Remove cabeçalhos com emoji e marcadores das respostas locais, deixando texto corrido. */
+    private static String cleanSimulationText(String text) {
+        if (text == null) return "";
+        return text.replaceAll("(?m)^[^\\p{L}\\p{N}(]*RESPOSTA SUGERIDA[^\\n]*\\n?", "")
+                .replaceAll("(?m)^\\(Modo simulação[^\\n]*\\)\\s*$", "")
+                .replaceAll("[•📚💡💼❓]", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private static String limitWords(String text, int max) {
+        String[] words = text.trim().split("\\s+");
+        if (words.length <= max) return text.trim();
+        return String.join(" ", java.util.Arrays.copyOf(words, max)) + "…";
     }
 
     private String buildStructuredTechnicalFallback(String question) {

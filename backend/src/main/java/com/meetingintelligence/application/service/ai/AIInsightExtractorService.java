@@ -143,6 +143,10 @@ public class AIInsightExtractorService {
                         category = InsightCategory.CONTENT_ANALYSIS;
                     }
 
+                    if (category == InsightCategory.QUESTION) {
+                        // Perguntas são respondidas só pelo copiloto dedicado (spec 004, RF-10), evitando cards duplicados
+                        continue;
+                    }
                     String title = node.path("title").asText("Insight Identificado");
                     String desc = node.path("description").asText("");
                     String speakerRef = node.path("speaker_reference").asText(null);

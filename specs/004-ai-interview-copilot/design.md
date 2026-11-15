@@ -62,3 +62,13 @@ Nenhuma falha do copiloto afeta a transcrição.
 | Validador da RN-01 por heurística | Confiar só no prompt | O risco de inventar experiência é o mais grave para o candidato; a heurística é barata e testável. Limitação documentada: não pega toda paráfrase. |
 | Prompts em arquivo versionado | Strings no código (atual) | Revisão e teste de contrato; evolução rastreável |
 | Reaproveitar `AIOrchestrator` (BYOK, fallback, circuit breaker) | Novo cliente | Preserva o investimento existente |
+
+## Mudanças na implementação (2026-11-15)
+| Design original | Implementado | Justificativa |
+|---|---|---|
+| `InterviewPromptFactory` + `CopilotContextBuilder` separados | `CopilotPromptBuilder` único (system versionado + contexto rotulado) | As duas responsabilidades são pequenas e sempre usadas juntas |
+| `spoken_answer` com 60-140 palavras | O prompt pede 60-140; o validador aceita 30-200 | Margem para não descartar respostas boas por poucas palavras; o pedido ao modelo continua 60-140 |
+| Simulação gerando `CopilotAnswer` | O provedor Gemini sem chave detecta o prompt do copiloto pelo marcador `INTERVIEW_COPILOT_V1` e devolve o mesmo contrato com `"simulated": true` e `model=simulacao-local` | Mesmo caminho do provedor real (orquestrador e fallback), sem ramo especial no serviço |
+| Wikipédia na simulação | Removida de todos os usos (copiloto, análise incremental e chat) | Enviava a fala da entrevista a um terceiro (RF-09) |
+| Prompt incremental sem respostas técnicas | Também ignora itens `QUESTION` que o modelo ainda devolva | Evita cards duplicados com o copiloto |
+| Gatilho manual via `/insights/trigger` | `POST /questions/answer-latest` + botão "Responder última pergunta" | Ver spec 005 |

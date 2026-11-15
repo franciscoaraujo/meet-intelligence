@@ -24,7 +24,8 @@ import {
 } from 'lucide-react';
 import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
-import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse } from '../types';
+import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse, InterviewQuestion } from '../types';
+import { InterviewAnswerCard } from '../components/copilot/InterviewAnswerCard';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
 import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
 import { manualSpeakerOptions, segmentSpeakerView, type SpeakerRole } from '../features/transcription/speaker';
@@ -71,6 +72,7 @@ export const LiveMeetingPage: React.FC = () => {
   const [highlightedTimeMs, setHighlightedTimeMs] = useState<number | null>(null);
 
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
@@ -147,6 +149,11 @@ export const LiveMeetingPage: React.FC = () => {
           setWsConnected(connected);
           // Ao (re)conectar, recupera eventos que possam ter sido perdidos durante a queda
           if (connected) refreshAiState(id);
+        },
+        (question) => {
+          setQuestions((prev) =>
+            prev.some((q) => q.id === question.id) ? prev.map((q) => (q.id === question.id ? question : q)) : [...prev, question]
+          );
         }
       );
       wsService.connect();
@@ -218,11 +225,15 @@ export const LiveMeetingPage: React.FC = () => {
 
   const refreshAiState = async (meetingId: string) => {
     try {
-      const [insightsRes, summaryRes, transcriptsRes] = await Promise.allSettled([
+      const [insightsRes, summaryRes, transcriptsRes, questionsRes] = await Promise.allSettled([
         api.get(`/meetings/${meetingId}/insights`),
         api.get(`/meetings/${meetingId}/summary`),
         api.get(`/meetings/${meetingId}/transcripts`),
+        api.get<InterviewQuestion[]>(`/meetings/${meetingId}/questions`),
       ]);
+      if (questionsRes.status === 'fulfilled' && Array.isArray(questionsRes.value.data)) {
+        setQuestions(questionsRes.value.data);
+      }
       if (insightsRes.status === 'fulfilled' && Array.isArray(insightsRes.value.data)) {
         setInsights(insightsRes.value.data);
       }
@@ -309,6 +320,29 @@ export const LiveMeetingPage: React.FC = () => {
     const text = manualSpeechInput;
     setManualSpeechInput('');
     await sendLiveSpeechSegment(text, speakerRoleRef.current, 'MANUAL');
+  };
+
+  /** Copiloto (spec 004): responder a última fala do entrevistador, gerar de novo e descartar. */
+  const answerLatestQuestion = async () => {
+    if (!id) return;
+    await api.post(`/meetings/${id}/questions/answer-latest`).catch((e) => console.error('Erro ao acionar o copiloto:', e));
+  };
+
+  const regenerateAnswer = async (questionId: string) => {
+    if (!id) return;
+    setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: 'ANSWERING' } : q)));
+    await api.post(`/meetings/${id}/questions/${questionId}/answer`).catch((e) => console.error('Erro ao gerar resposta:', e));
+  };
+
+  const dismissQuestion = async (questionId: string) => {
+    if (!id) return;
+    try {
+      const res = await api.post<InterviewQuestion>(`/meetings/${id}/questions/${questionId}/dismiss`);
+      setQuestions((prev) => prev.map((q) => (q.id === questionId ? res.data : q)));
+      setInsights((prev) => prev.filter((i) => i.questionId !== questionId));
+    } catch (e) {
+      console.error('Erro ao descartar pergunta:', e);
+    }
   };
 
   /** Papel do usuário na entrevista (spec 003, RF-04). */
@@ -579,6 +613,15 @@ export const LiveMeetingPage: React.FC = () => {
             <option value="BACKEND">Microfone: transcrição do servidor</option>
             <option value="WEB_SPEECH">Microfone: reconhecimento do navegador (Google)</option>
           </select>
+
+          <button
+            onClick={answerLatestQuestion}
+            className="md-btn-tonal !py-1.5 !px-3.5 !text-xs"
+            title="Gera a sugestão de resposta para a última fala do entrevistador"
+          >
+            <Sparkles className="w-3.5 h-3.5" />
+            <span>Responder última pergunta</span>
+          </button>
 
           <button
             onClick={triggerAiAnalysis}
@@ -883,14 +926,33 @@ export const LiveMeetingPage: React.FC = () => {
                     Nenhum insight gerado ainda. A IA analisa as falas a cada bloco semântico.
                   </div>
                 ) : (
-                  insights.map((ins) => (
+                  <>
+                  {questions
+                    .filter((q) => !q.answerInsightId && (q.status === 'ANSWERING' || q.status === 'FAILED' || (q.status === 'DETECTED' && !q.autoAnswer)))
+                    .map((q) => (
+                      <InterviewAnswerCard
+                        key={`q-${q.id}`}
+                        question={q}
+                        formatMs={formatMs}
+                        onJump={jumpToTimestamp}
+                        onRegenerate={regenerateAnswer}
+                        onDismiss={dismissQuestion}
+                      />
+                    ))}
+                  {insights.map((ins) => ins.category === 'QUESTION' ? (
+                    <InterviewAnswerCard
+                      key={ins.id}
+                      insight={ins}
+                      question={questions.find((q) => q.id === ins.questionId)}
+                      formatMs={formatMs}
+                      onJump={jumpToTimestamp}
+                      onRegenerate={regenerateAnswer}
+                      onDismiss={dismissQuestion}
+                    />
+                  ) : (
                     <div
                       key={ins.id}
-                      className={`p-4 rounded-2xl border space-y-1.5 shadow-2xs ${
-                        ins.category === 'QUESTION'
-                          ? 'bg-[#f0f6ff] border-[#0b57d0]/40'
-                          : 'bg-white border-[#e0e3e7]'
-                      }`}
+                      className="p-4 rounded-2xl border space-y-1.5 shadow-2xs bg-white border-[#e0e3e7]"
                     >
                       <div className="flex items-center justify-between">
                         <span
@@ -899,12 +961,10 @@ export const LiveMeetingPage: React.FC = () => {
                               ? 'bg-[#e6f4ea] text-[#137333]'
                               : ins.category === 'TASK'
                               ? 'bg-[#e8f0fe] text-[#1967d2]'
-                              : ins.category === 'QUESTION'
-                              ? 'bg-[#0b57d0] text-white'
                               : 'bg-[#f3e8fd] text-[#6b4ea2]'
                           }`}
                         >
-                          {ins.category === 'QUESTION' ? '🎯 Copiloto — Resposta Técnica' : ins.category}
+                          {ins.category}
                         </span>
                         {ins.startTimeMs && (
                           <button
@@ -922,7 +982,8 @@ export const LiveMeetingPage: React.FC = () => {
                         <p className="text-[11px] text-[#747775]">Por: {ins.speakerReference}</p>
                       )}
                     </div>
-                  ))
+                  ))}
+                  </>
                 )}
               </>
             )}

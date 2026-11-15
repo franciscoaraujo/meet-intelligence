@@ -2,6 +2,8 @@
 
 Pré-requisitos: spec 005 `T-08` (perguntas detectadas e interface do copiloto).
 
+**Status (2026-11-15):** T-01 a T-08 e T-10 concluídas. Evidência: `CopilotAnswerValidatorTest` 6, `InterviewCopilotServiceTest` 9 (inclui simulação validada sem chamada externa), `InterviewAnswerCard.test.tsx` 6. Backend 108 testes verdes; frontend 53. **Pendente:** T-09 (medir latência e qualidade com uma chave de IA real — não há chave válida configurada).
+
 | ID | Tarefa | Depende de | Concluída quando |
 |---|---|---|---|
 | T-01 | `CopilotAnswer` (record) + `CopilotAnswerParser` (tolerante a cercas markdown) | — | Testes com JSON válido, inválido e com cercas |

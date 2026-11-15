@@ -10,7 +10,7 @@
  */
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { TranscriptSegment, AIInsight, MeetingSummary } from '../types';
+import { TranscriptSegment, AIInsight, MeetingSummary, InterviewQuestion } from '../types';
 
 export class MeetingWebSocketService {
   private client: Client | null = null;
@@ -19,19 +19,22 @@ export class MeetingWebSocketService {
   private onInsightCallback?: (insight: AIInsight) => void;
   private onSummaryCallback?: (summary: MeetingSummary) => void;
   private onConnectionStatusChange?: (connected: boolean) => void;
+  private onQuestionCallback?: (question: InterviewQuestion) => void;
 
   constructor(
     meetingId: string,
     onTranscript: (segment: TranscriptSegment) => void,
     onInsight?: (insight: AIInsight) => void,
     onSummary?: (summary: MeetingSummary) => void,
-    onConnectionChange?: (connected: boolean) => void
+    onConnectionChange?: (connected: boolean) => void,
+    onQuestion?: (question: InterviewQuestion) => void
   ) {
     this.meetingId = meetingId;
     this.onTranscriptCallback = onTranscript;
     this.onInsightCallback = onInsight;
     this.onSummaryCallback = onSummary;
     this.onConnectionStatusChange = onConnectionChange;
+    this.onQuestionCallback = onQuestion;
   }
 
   public connect() {
@@ -65,6 +68,17 @@ export class MeetingWebSocketService {
               this.onInsightCallback(insight);
             } catch (err) {
               console.error('Erro ao deserializar insight via WS:', err);
+            }
+          }
+        });
+
+        // Perguntas detectadas e estado da resposta do copiloto (spec 005/004)
+        this.client?.subscribe(`/topic/meetings/${this.meetingId}/questions`, (message) => {
+          if (message.body && this.onQuestionCallback) {
+            try {
+              this.onQuestionCallback(JSON.parse(message.body) as InterviewQuestion);
+            } catch (err) {
+              console.error('Erro ao deserializar pergunta via WS:', err);
             }
           }
         });

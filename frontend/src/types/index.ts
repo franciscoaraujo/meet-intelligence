@@ -85,6 +85,28 @@ export interface AIInsight {
   endTimeMs?: number;
   speakerReference?: string;
   createdAt: string;
+  /** Pergunta que originou o insight (copiloto, spec 004/005). */
+  questionId?: string;
+  /** JSON com a resposta estruturada do copiloto. */
+  metadata?: string;
+}
+
+/** Pergunta detectada na entrevista (spec 005). */
+export interface InterviewQuestion {
+  id: string;
+  meetingId: string;
+  status: 'DETECTED' | 'ANSWERING' | 'ANSWERED' | 'FAILED' | 'DISMISSED';
+  questionText: string;
+  utteranceType: string;
+  score: number;
+  autoAnswer: boolean;
+  sourceSegmentIds: string[];
+  captureStartMs?: number;
+  captureEndMs?: number;
+  answerInsightId?: string;
+  answerVersion: number;
+  failureReason?: string;
+  createdAt: string;
 }
 
 export interface MeetingSummary {

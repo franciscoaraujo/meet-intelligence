@@ -130,7 +130,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 ### P-13 · P1 — ✅ resolvido pela spec 005 — Insight sem vínculo rastreável com a origem
 - **Causa raiz:** `ai_insights` guarda só `start_time_ms`/`end_time_ms` do bloco (com relógio inconsistente), sem `chunk_id`, sem segmentos de origem e sem o texto da pergunta detectada. Se o JSON do LLM falha no parse, o bloco é marcado `processedByAi=true` mesmo assim (linhas 80-83), e o insight é perdido sem rastro.
 
-### P-14 · P1 — Copiloto responde a menções, não a perguntas
+### P-14 · P1 — ✅ resolvido pela spec 004 — Copiloto responde a menções, não a perguntas
 - **Causa raiz:**
   - O prompt base (`PromptManagerService:10-18`) manda gerar um `QUESTION` com resposta completa "sempre que o entrevistador **mencionar** um conceito técnico".
   - Não existe classificação de intenção: pergunta direta, indireta, discussão, comentário ou resposta do candidato.

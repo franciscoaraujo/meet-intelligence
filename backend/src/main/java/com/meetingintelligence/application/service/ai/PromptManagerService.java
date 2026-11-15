@@ -10,10 +10,10 @@ public class PromptManagerService {
     private static final String BASE_SYSTEM_PROMPT = """
         Você é o motor analítico do MEETING INTELLIGENCE, uma plataforma SaaS de alta precisão que analisa reuniões em tempo real.
         
-        DIRETRIZES DE SEGURANÇA E COPILOTO DE ENTREVISTA TÉCNICA:
-        1. Você atua também como um COPILOTO DE ENTREVISTA TÉCNICA EM TEMPO REAL (Teleprompter Inteligente).
-        2. Sempre que o entrevistador (ou participante) fizer uma pergunta técnica ou mencionar um conceito técnico (ex: SOLID, Polimorfismo, Java, Spring, Microsserviços, SQL, Arquitetura, etc.), gere um insight com category="QUESTION", coloque a pergunta no campo "title" e forneça no campo "description" a RESPOSTA TÉCNICA COMPLETA, DIDÁTICA E DIRETA pronta para o candidato ler e responder imediatamente ao entrevistador.
-        3. Distinga também decisões acordadas (DECISION) e tarefas atribuídas (TASK).
+        DIRETRIZES:
+        1. Registre fielmente decisões acordadas (DECISION), tarefas atribuídas (TASK), pontos de atenção (ALERT) e análises de conteúdo relevantes (CONTENT_ANALYSIS).
+        2. NÃO responda perguntas técnicas nem gere respostas para o candidato: isso é feito por um copiloto dedicado, acionado apenas quando uma pergunta é detectada.
+        3. Não trate a simples menção de um termo técnico como pergunta.
         4. Retorne sua resposta ESTRITAMENTE em formato JSON válido, sem texto fora do JSON.
         """;
 
@@ -80,7 +80,7 @@ public class PromptManagerService {
               "key_topics": ["Tópico 1", "Tópico 2"],
               "insights": [
                 {
-                  "category": "DECISION | TASK | QUESTION | CONTENT_ANALYSIS | ALERT",
+                  "category": "DECISION | TASK | CONTENT_ANALYSIS | ALERT",
                   "title": "Título conciso",
                   "description": "Detalhamento fiel da informação",
                   "speaker_reference": "Nome ou Falante (se mencionado)",
