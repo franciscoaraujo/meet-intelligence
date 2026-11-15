@@ -4,14 +4,13 @@ import com.meetingintelligence.application.dto.AudioChunkCommand;
 import com.meetingintelligence.application.dto.ChunkTranscriptionResponse;
 import com.meetingintelligence.application.exception.ResourceNotFoundException;
 import com.meetingintelligence.domain.entity.Meeting;
-import com.meetingintelligence.domain.entity.MeetingParticipant;
 import com.meetingintelligence.domain.entity.TranscriptIngestion;
 import com.meetingintelligence.domain.entity.TranscriptSegment;
 import com.meetingintelligence.domain.speech.AudioSource;
+import com.meetingintelligence.domain.speech.SpeakerRole;
 import com.meetingintelligence.domain.speech.SttRequest;
 import com.meetingintelligence.domain.speech.TranscriptionChainResult;
 import com.meetingintelligence.domain.speech.TranscriptionSegmentDto;
-import com.meetingintelligence.infrastructure.persistence.repository.MeetingParticipantRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.MeetingRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.OrganizationAiConfigRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.TranscriptIngestionRepository;
@@ -29,7 +28,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
@@ -47,13 +45,11 @@ import java.util.stream.Collectors;
 @Slf4j
 public class TranscriptionService {
 
-    static final String TAB_SPEAKER_LABEL = "Entrevistador (Google Meet)";
-    static final String MIC_SPEAKER_LABEL = "Você (microfone)";
     static final String WEB_SPEECH_SOURCE = "WEB_SPEECH";
+    static final String MANUAL_SOURCE = "MANUAL";
 
     private final MeetingRepository meetingRepository;
     private final TranscriptSegmentRepository segmentRepository;
-    private final MeetingParticipantRepository participantRepository;
     private final OrganizationAiConfigRepository aiConfigRepository;
     private final TranscriptIngestionRepository ingestionRepository;
     private final SpeechToTextRouter speechToTextRouter;
@@ -61,6 +57,7 @@ public class TranscriptionService {
     private final SimpMessagingTemplate messagingTemplate;
     private final com.meetingintelligence.application.service.ai.TranscriptChunkAggregatorService chunkAggregatorService;
     private final PlatformTransactionManager transactionManager;
+    private final SpeakerAttributionService speakerAttribution;
 
     // ------------------------------------------------------------- Áudio ao vivo
 
@@ -68,7 +65,7 @@ public class TranscriptionService {
      * Processa um trecho de áudio ao vivo (aba do Meet ou microfone). Não roda numa transação única:
      * a chamada aos provedores pode levar segundos e não deve segurar conexão de banco.
      */
-    public ChunkTranscriptionResponse processAudioChunk(AudioChunkCommand cmd, UUID organizationId) {
+    public ChunkTranscriptionResponse processAudioChunk(AudioChunkCommand cmd, UUID organizationId, UUID userId) {
         TransactionTemplate tx = new TransactionTemplate(transactionManager);
         UUID clientSegmentId = cmd.clientSegmentId() != null ? cmd.clientSegmentId() : UUID.randomUUID();
         AudioSource source = cmd.audioSource() != null ? cmd.audioSource() : AudioSource.TAB;
@@ -90,7 +87,7 @@ public class TranscriptionService {
                     request, chainFactory.build(claim.orgConfig(), SttRequest.Mode.LIVE));
 
             // 3. Persistência conforme o resultado
-            return tx.execute(status -> completeIngestion(claim.ingestionId(), cmd, source, result));
+            return tx.execute(status -> completeIngestion(claim.ingestionId(), cmd, source, result, userId));
         } finally {
             MDC.remove("meetingId");
             MDC.remove("clientSegmentId");
@@ -148,7 +145,7 @@ public class TranscriptionService {
     }
 
     private ChunkTranscriptionResponse completeIngestion(UUID ingestionId, AudioChunkCommand cmd, AudioSource source,
-                                                         TranscriptionChainResult result) {
+                                                         TranscriptionChainResult result, UUID userId) {
         TranscriptIngestion ing = ingestionRepository.findById(ingestionId).orElseThrow();
         ing.setProvider(result.provider());
         ChunkTranscriptionResponse.ChunkTranscriptionResponseBuilder response = ChunkTranscriptionResponse.builder()
@@ -177,9 +174,7 @@ public class TranscriptionService {
                     // Comportamento preservado: o mesmo texto nos últimos 3 segmentos não é gravado de novo
                     response.duplicate(true).segments(List.of());
                 } else {
-                    String speaker = source == AudioSource.MIC
-                            ? (cmd.speakerLabel() != null && !cmd.speakerLabel().isBlank() ? cmd.speakerLabel() : MIC_SPEAKER_LABEL)
-                            : TAB_SPEAKER_LABEL;
+                    var speaker = speakerAttribution.forLiveAudio(meeting, source, userId);
                     long start = cmd.captureStartMs() != null ? cmd.captureStartMs() : legacyStartMs(meeting.getId());
                     long end = cmd.captureEndMs() != null ? cmd.captureEndMs() : start + 5000L;
                     TranscriptSegment saved = persistSpeech(meeting, speaker, text, start, end, result.provider(),
@@ -227,12 +222,14 @@ public class TranscriptionService {
             return result;
         }
 
-        List<MeetingParticipant> participants = participantRepository.findByMeetingId(meetingId);
         for (TranscriptionSegmentDto dto : result.segments()) {
+            var speaker = speakerAttribution.forUpload(meeting, dto);
             TranscriptSegment saved = segmentRepository.save(TranscriptSegment.builder()
                     .meeting(meeting)
-                    .participant(findOrCreateParticipant(meeting, dto, participants))
-                    .speakerLabel(dto.getSpeakerLabel() != null ? dto.getSpeakerLabel() : "Participante")
+                    .participant(speaker.participant())
+                    .speakerLabel(speaker.label())
+                    .speakerRole(speaker.role())
+                    .speakerConfidence(speaker.confidence())
                     .originalText(dto.getText())
                     .startTimeMs(dto.getStartTimeMs() != null ? dto.getStartTimeMs() : 0L)
                     .endTimeMs(dto.getEndTimeMs() != null ? dto.getEndTimeMs() : 0L)
@@ -248,21 +245,48 @@ public class TranscriptionService {
 
     // ------------------------------------------------ Fala reconhecida no navegador
 
-    /** Fala já reconhecida no navegador (Web Speech) ou digitada. */
+    /**
+     * Fala já reconhecida no navegador: Web Speech do microfone (audioSource=MIC) ou texto digitado
+     * (MANUAL) com o falante escolhido pelo usuário.
+     */
     @Transactional
-    public TranscriptSegment processLiveTextSegment(UUID meetingId, String speakerLabel, String text, long startTimeMs, long endTimeMs) {
-        Meeting meeting = meetingRepository.findById(meetingId)
-                .orElseThrow(() -> new ResourceNotFoundException("Reunião não encontrada: " + meetingId));
-        String resolvedSpeaker = (speakerLabel != null && !speakerLabel.isBlank()) ? speakerLabel : "Participante (Voz ao Vivo)";
-        return persistSpeech(meeting, resolvedSpeaker, text, startTimeMs, endTimeMs, WEB_SPEECH_SOURCE, null, null, null);
+    public TranscriptSegment processLiveTextSegment(UUID meetingId, UUID organizationId, UUID userId, String speakerLabel,
+                                                   SpeakerRole speakerRoleHint, AudioSource audioSource, String text,
+                                                   long startTimeMs, long endTimeMs) {
+        Meeting meeting = findMeetingOfOrganization(meetingId, organizationId);
+        AudioSource source = audioSource == AudioSource.MIC ? AudioSource.MIC : AudioSource.MANUAL;
+        var speaker = speakerAttribution.forBrowserText(meeting, source, speakerLabel, speakerRoleHint, userId);
+        return persistSpeech(meeting, speaker, text, startTimeMs, endTimeMs,
+                source == AudioSource.MIC ? WEB_SPEECH_SOURCE : MANUAL_SOURCE, source, null, null);
+    }
+
+    /** Correção manual de quem falou (spec 003, RF-09): confiança passa a 1,0. */
+    @Transactional
+    public TranscriptSegment updateSegmentSpeaker(UUID segmentId, String speakerLabel, SpeakerRole role) {
+        TranscriptSegment segment = segmentRepository.findById(segmentId)
+                .orElseThrow(() -> new ResourceNotFoundException("Segmento de transcrição não encontrado: " + segmentId));
+        if (speakerLabel == null || speakerLabel.isBlank()) {
+            throw new IllegalArgumentException("speakerLabel é obrigatório.");
+        }
+        segment.setSpeakerLabel(speakerLabel.trim());
+        if (role != null) segment.setSpeakerRole(role);
+        segment.setSpeakerConfidence(BigDecimal.ONE);
+        TranscriptSegment saved = segmentRepository.save(segment);
+        try {
+            messagingTemplate.convertAndSend("/topic/meetings/" + saved.getMeeting().getId() + "/transcripts", saved);
+        } catch (Exception e) {
+            log.warn("Erro ao emitir WebSocket para correção de falante: {}", e.getClass().getSimpleName());
+        }
+        return saved;
     }
 
     /**
      * Grava uma fala, fundindo com o segmento anterior do mesmo falante quando é continuação.
      * Publica no WebSocket e alimenta o agregador de IA.
      */
-    private TranscriptSegment persistSpeech(Meeting meeting, String speaker, String text, long startTimeMs, long endTimeMs,
-                                            String provider, AudioSource audioSource, Long captureStartMs, Long captureEndMs) {
+    private TranscriptSegment persistSpeech(Meeting meeting, SpeakerAttributionService.SpeakerAttribution speaker,
+                                            String text, long startTimeMs, long endTimeMs, String provider,
+                                            AudioSource audioSource, Long captureStartMs, Long captureEndMs) {
         String cleanText = text != null ? text.trim() : "";
         long safeEnd = endTimeMs > startTimeMs ? endTimeMs : startTimeMs + 3000L;
 
@@ -271,7 +295,9 @@ public class TranscriptionService {
         if (!existingSegments.isEmpty() && !cleanText.isEmpty()) {
             TranscriptSegment last = existingSegments.get(existingSegments.size() - 1);
             String lastText = last.getOriginalText() != null ? last.getOriginalText().trim() : "";
-            boolean sameSpeaker = Objects.equals(last.getSpeakerLabel(), speaker);
+            // Funde só falas do mesmo falante e da mesma origem (aba e microfone nunca se misturam)
+            boolean sameSpeaker = Objects.equals(last.getSpeakerLabel(), speaker.label())
+                    && Objects.equals(last.getAudioSource(), audioSource);
             long timeGapMs = Math.abs(startTimeMs - last.getStartTimeMs());
 
             if (sameSpeaker && shouldMergeWithPreviousSegment(lastText, cleanText, timeGapMs)) {
@@ -284,13 +310,12 @@ public class TranscriptionService {
             }
         }
 
-        List<MeetingParticipant> existingParticipants = participantRepository.findByMeetingId(meeting.getId());
-        MeetingParticipant participant = existingParticipants.isEmpty() ? null : existingParticipants.get(0);
-
         TranscriptSegment saved = segmentRepository.save(TranscriptSegment.builder()
                 .meeting(meeting)
-                .participant(participant)
-                .speakerLabel(speaker)
+                .participant(speaker.participant())
+                .speakerLabel(speaker.label())
+                .speakerRole(speaker.role())
+                .speakerConfidence(speaker.confidence())
                 .originalText(cleanText)
                 .startTimeMs(startTimeMs)
                 .endTimeMs(safeEnd)
@@ -424,32 +449,4 @@ public class TranscriptionService {
         segment.setCorrectedText(newText);
         return segmentRepository.save(segment);
     }
-
-    private MeetingParticipant findOrCreateParticipant(
-            Meeting meeting,
-            TranscriptionSegmentDto dto,
-            List<MeetingParticipant> participants) {
-
-        if (dto.getSpeakerTag() == null) {
-            return participants.isEmpty() ? null : participants.get(0);
-        }
-
-        for (MeetingParticipant p : participants) {
-            if (dto.getSpeakerTag().equals(p.getSpeakerTag())) {
-                return p;
-            }
-        }
-
-        // Se for um novo falante detectado pela diarização, cria participante
-        MeetingParticipant newParticipant = participantRepository.save(MeetingParticipant.builder()
-                .meeting(meeting)
-                .name(dto.getSpeakerLabel() != null ? dto.getSpeakerLabel() : "Participante " + dto.getSpeakerTag())
-                .speakerTag(dto.getSpeakerTag())
-                .role("PARTICIPANT")
-                .build());
-
-        participants.add(newParticipant);
-        return newParticipant;
-    }
 }
-

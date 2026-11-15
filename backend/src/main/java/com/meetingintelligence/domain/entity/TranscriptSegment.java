@@ -66,6 +66,15 @@ public class TranscriptSegment {
     @Column(name = "audio_source", length = 10)
     private com.meetingintelligence.domain.speech.AudioSource audioSource;
 
+    /** Papel de quem falou (spec 003); nulo em segmentos anteriores. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "speaker_role", length = 10)
+    private com.meetingintelligence.domain.speech.SpeakerRole speakerRole;
+
+    /** Confiança na atribuição do falante (0-1); 1,0 quando corrigida manualmente. */
+    @Column(name = "speaker_confidence", precision = 4, scale = 3)
+    private java.math.BigDecimal speakerConfidence;
+
     /** Início/fim no relógio da sessão de captura do cliente (ms); nulo quando o cliente não envia. */
     @Column(name = "capture_start_ms")
     private Long captureStartMs;

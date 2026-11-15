@@ -1,6 +1,6 @@
 # Spec 003 — Identificação de falantes
 
-Prioridade: **P2** (fundação necessária para a 005) · Status: **Aprovada (2026-11-15), não iniciada** · Problemas: P-08, P-09
+Prioridade: **P2** (fundação necessária para a 005) · Status: **Implementada (testes automatizados; validação em reunião real pendente)** · Problemas: P-08, P-09
 
 ## Contexto e problema
 Quem falou é decidido hoje por heurística:
@@ -34,7 +34,6 @@ Cada segmento registra **de onde veio** (origem), **quem provavelmente falou** (
   |---|---|---|---|---|
   | `MIC` | `SELF` | Nome do usuário logado (ou "Você") | 0,9 | Participante do usuário logado |
   | `TAB` sem diarização | `REMOTE` | "Participante remoto (Meet)" | 0,8 | Nenhum |
-  | `TAB` com diarização do provedor | `REMOTE` | "Participante remoto N" | Valor do provedor | Participante "remoto N" criado por reunião |
   | `UPLOAD` com diarização | `UNKNOWN` | "Falante N" | Valor do provedor | Participante "Falante N" (comportamento atual) |
   | `UPLOAD` sem diarização / `MANUAL` | Escolhido pelo usuário ou `UNKNOWN` | Rótulo escolhido ou "Desconhecido" | 1,0 se escolhido, senão 0 | Conforme a escolha |
 - **RF-04** Na reunião do tipo entrevista, o usuário define seu papel (`Candidato` ou `Entrevistador`). Isso mapeia `SELF`/`REMOTE` para papéis de entrevista usados pela spec 005. Padrão: `Candidato`.

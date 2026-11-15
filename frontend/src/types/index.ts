@@ -26,6 +26,8 @@ export interface Meeting {
   googleCalendarEventId?: string;
   captureMechanism: CaptureMechanism;
   language: string;
+  /** Papel do usuário na entrevista (spec 003). */
+  userInterviewRole?: 'CANDIDATE' | 'INTERVIEWER';
   createdAt: string;
 }
 
@@ -58,6 +60,9 @@ export interface TranscriptSegment {
   audioSource?: 'TAB' | 'MIC' | 'UPLOAD' | 'MANUAL';
   captureStartMs?: number;
   captureEndMs?: number;
+  /** Quem falou (spec 003): o próprio usuário, participante remoto ou sem evidência. */
+  speakerRole?: 'SELF' | 'REMOTE' | 'UNKNOWN';
+  speakerConfidence?: number;
 }
 
 /** Resposta do POST /transcripts/chunk (spec 002). */

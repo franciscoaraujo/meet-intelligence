@@ -97,7 +97,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
 - **Causa raiz:** todos os clientes usam `new RestTemplate()` sem timeout (`TranscriptionService:45`, provedores de IA e de STT). Não há retry por provedor. O `AIOrchestrator` tem circuit breaker, mas o STT não.
 - **Impacto:** uma chamada travada segura a thread HTTP do `/chunk` e a fila do frontend (`isSendingWav`) indefinidamente.
 
-### P-08 · P2 — Identificação de falante por heurística de atividade
+### P-08 · P2 — ✅ resolvido pelas specs 001/003 — Identificação de falante por heurística de atividade
 - **Causa raiz:**
   - `resolveActiveSpeaker()` (linha 461) rotula a fala do microfone como "Entrevistador" se a aba teve som nos últimos 2,4 s.
   - O falante padrão é o nome fixo `'Francisco Araújo'` (linha 81).
@@ -106,7 +106,7 @@ Severidade: **P0** bloqueia o fluxo; **P1** compromete o copiloto; **P2** afeta 
   - O campo `source` é fixo em `WEB_SPEECH_LIVE` (linha 317), mesmo para áudio da aba transcrito pelo Google STT; a reunião real confirma.
 - **Impacto:** atribuição errada de quem falou, inclusive afirmando identidade sem evidência. Isso alimenta a detecção de perguntas com dados errados.
 
-### P-09 · P2 — Linha do tempo inconsistente entre fontes
+### P-09 · P2 — ✅ resolvido pelas specs 001/003 — Linha do tempo inconsistente entre fontes
 - **Causa raiz:** o microfone usa segundos desde o "gravar" da página (zera ao recarregar). A aba usa `quantidadeDeSegmentos × 5000` (`TranscriptionService:213`). O cliente não envia horário de captura no `/chunk`.
 - **Situação:** a ordem da lista já foi corrigida (ordenação por `createdAt`, não commitada), mas os horários `mm:ss` exibidos e a lógica de fusão por `timeGapMs` continuam errados.
 

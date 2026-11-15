@@ -78,7 +78,7 @@ class TranscriptionChunkIT extends AbstractPostgresIT {
     @BeforeEach
     void setUp() {
         orgId = UUID.randomUUID();
-        UUID userId = UUID.randomUUID();
+        userId = UUID.randomUUID();
         meetingId = UUID.randomUUID();
         jdbc.update("insert into organizations(id, name, slug) values (?, 'Org IT', ?)", orgId, "org-" + orgId);
         jdbc.update("insert into users(id, email, full_name) values (?, ?, 'Usuário IT')", userId, userId + "@it.test");
@@ -93,17 +93,23 @@ class TranscriptionChunkIT extends AbstractPostgresIT {
         when(chainFactory.build(any(), any())).thenReturn(List.of(new ChainStep(primary, creds), new ChainStep(fallback, creds)));
     }
 
+    private UUID userId;
+
     private UsernamePasswordAuthenticationToken userOf(UUID organizationId) {
         UserPrincipal principal = UserPrincipal.builder()
-                .id(UUID.randomUUID()).email("it@test").organizationId(organizationId).role("OWNER").build();
+                .id(userId).email(userId + "@it.test").organizationId(organizationId).role("OWNER").build();
         return new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
     }
 
     private String body(UUID clientSegmentId) {
+        return body(clientSegmentId, "TAB");
+    }
+
+    private String body(UUID clientSegmentId, String audioSource) {
         return """
                 {"base64Audio":"%s","mimeType":"audio/wav","clientSegmentId":"%s",
-                 "audioSource":"TAB","captureStartMs":120000,"captureEndMs":124000}
-                """.formatted(Base64.getEncoder().encodeToString(wav(2000)), clientSegmentId);
+                 "audioSource":"%s","captureStartMs":120000,"captureEndMs":124000}
+                """.formatted(Base64.getEncoder().encodeToString(wav(2000)), clientSegmentId, audioSource);
     }
 
     @Test
@@ -122,7 +128,9 @@ class TranscriptionChunkIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.attempts[0].reason").value("HTTP_5XX"))
                 .andExpect(jsonPath("$.segments[0].originalText").value("Explique o conceito de SOLID"))
                 .andExpect(jsonPath("$.segments[0].audioSource").value("TAB"))
-                .andExpect(jsonPath("$.segments[0].captureStartMs").value(120000));
+                .andExpect(jsonPath("$.segments[0].captureStartMs").value(120000))
+                .andExpect(jsonPath("$.segments[0].speakerRole").value("REMOTE"))
+                .andExpect(jsonPath("$.segments[0].speakerLabel").value("Participante remoto (Meet)"));
 
         mvc.perform(post("/api/v1/meetings/{id}/transcripts/chunk", meetingId)
                         .with(authentication(userOf(orgId)))
@@ -173,6 +181,40 @@ class TranscriptionChunkIT extends AbstractPostgresIT {
                 .andExpect(status().isNotFound());
 
         assertThat(primaryCalls.get()).isZero();
+    }
+
+    @Test
+    @DisplayName("Spec 003 CA-02/CA-03: áudio do microfone é SELF, vinculado ao participante do usuário; a aba continua REMOTE")
+    void microphoneIsSelfAndTabIsRemote() throws Exception {
+        mvc.perform(post("/api/v1/meetings/{id}/transcripts/chunk", meetingId)
+                        .with(authentication(userOf(orgId)))
+                        .contentType(MediaType.APPLICATION_JSON).content(body(UUID.randomUUID(), "MIC")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.segments[0].speakerRole").value("SELF"))
+                .andExpect(jsonPath("$.segments[0].speakerLabel").value("Usuário IT"))
+                .andExpect(jsonPath("$.segments[0].audioSource").value("MIC"));
+
+        Integer selfParticipants = jdbc.queryForObject(
+                "select count(*) from meeting_participants where meeting_id = ? and email = ?",
+                Integer.class, meetingId, userId + "@it.test");
+        assertThat(selfParticipants).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Spec 003: texto digitado com falante escolhido é MANUAL com confiança 1,0")
+    void manualTextKeepsChosenSpeaker() throws Exception {
+        mvc.perform(post("/api/v1/meetings/{id}/transcripts/live-text", meetingId)
+                        .with(authentication(userOf(orgId)))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"speakerLabel":"Entrevistador","speakerRole":"REMOTE","text":"Explique SOLID",
+                                 "startTimeMs":0,"endTimeMs":1000}
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.audioSource").value("MANUAL"))
+                .andExpect(jsonPath("$.speakerRole").value("REMOTE"))
+                .andExpect(jsonPath("$.speakerConfidence").value(1))
+                .andExpect(jsonPath("$.source").value("MANUAL"));
     }
 
     @Test

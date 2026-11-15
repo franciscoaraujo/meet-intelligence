@@ -47,7 +47,6 @@ class TranscriptionServiceTest {
 
     @Mock private MeetingRepository meetingRepository;
     @Mock private TranscriptSegmentRepository segmentRepository;
-    @Mock private MeetingParticipantRepository participantRepository;
     @Mock private OrganizationAiConfigRepository aiConfigRepository;
     @Mock private TranscriptIngestionRepository ingestionRepository;
     @Mock private SpeechToTextRouter speechToTextRouter;
@@ -55,12 +54,14 @@ class TranscriptionServiceTest {
     @Mock private SimpMessagingTemplate messagingTemplate;
     @Mock private TranscriptChunkAggregatorService chunkAggregatorService;
     @Mock private PlatformTransactionManager transactionManager;
+    @Mock private com.meetingintelligence.application.service.SpeakerAttributionService speakerAttribution;
 
     @InjectMocks
     private TranscriptionService transcriptionService;
 
     private final UUID orgId = UUID.randomUUID();
     private final UUID meetingId = UUID.randomUUID();
+    private final UUID userId = UUID.randomUUID();
     private Meeting meeting;
     private final List<TranscriptIngestion> ingestions = new ArrayList<>();
 
@@ -76,7 +77,12 @@ class TranscriptionServiceTest {
         when(aiConfigRepository.findByOrganizationId(orgId)).thenReturn(Optional.empty());
         when(chainFactory.build(any(), any())).thenReturn(List.of());
         when(segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId)).thenReturn(List.of());
-        when(participantRepository.findByMeetingId(meetingId)).thenReturn(new ArrayList<>());
+        when(speakerAttribution.forLiveAudio(any(), any(), any())).thenAnswer(inv ->
+                new com.meetingintelligence.application.service.SpeakerAttributionService.SpeakerAttribution(
+                        inv.getArgument(1) == AudioSource.MIC ? com.meetingintelligence.domain.speech.SpeakerRole.SELF
+                                : com.meetingintelligence.domain.speech.SpeakerRole.REMOTE,
+                        inv.getArgument(1) == AudioSource.MIC ? "Francisco" : "Participante remoto (Meet)",
+                        java.math.BigDecimal.valueOf(0.8), null));
         when(segmentRepository.save(any(TranscriptSegment.class))).thenAnswer(inv -> {
             TranscriptSegment s = inv.getArgument(0);
             if (s.getId() == null) s.setId(UUID.randomUUID());
@@ -114,7 +120,7 @@ class TranscriptionServiceTest {
     void transcribedChunkIsPersistedAndPublished() {
         when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Explique o conceito de SOLID"));
 
-        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId);
+        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
 
         assertThat(response.getStatus()).isEqualTo("TRANSCRIBED");
         assertThat(response.getProvider()).isEqualTo("DEEPGRAM");
@@ -123,6 +129,8 @@ class TranscriptionServiceTest {
         assertThat(seg.getOriginalText()).isEqualTo("Explique o conceito de SOLID");
         assertThat(seg.getSource()).isEqualTo("DEEPGRAM");
         assertThat(seg.getAudioSource()).isEqualTo(AudioSource.TAB);
+        assertThat(seg.getSpeakerRole()).isEqualTo(com.meetingintelligence.domain.speech.SpeakerRole.REMOTE);
+        assertThat(seg.getSpeakerLabel()).isEqualTo("Participante remoto (Meet)");
         assertThat(seg.getStartTimeMs()).isEqualTo(125_000L);
         assertThat(seg.getCaptureEndMs()).isEqualTo(131_400L);
         assertThat(ingestions.get(0).getStatus()).isEqualTo(TranscriptIngestion.Status.TRANSCRIBED);
@@ -138,7 +146,7 @@ class TranscriptionServiceTest {
                 TranscriptionChainResult.Status.FAILED, null, List.of(),
                 List.of(new Attempt("GEMINI", "FAILED", FailureReason.HTTP_5XX, "HTTP 500", 10))));
 
-        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId);
+        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
 
         assertThat(response.getStatus()).isEqualTo("FAILED");
         assertThat(response.getFailureReason()).isEqualTo("HTTP_5XX");
@@ -154,7 +162,7 @@ class TranscriptionServiceTest {
         when(speechToTextRouter.transcribe(any(), any())).thenReturn(new TranscriptionChainResult(
                 TranscriptionChainResult.Status.NO_SPEECH, "GEMINI", List.of(), List.of()));
 
-        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId);
+        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
 
         assertThat(response.getStatus()).isEqualTo("NO_SPEECH");
         verify(segmentRepository, never()).save(any());
@@ -165,10 +173,10 @@ class TranscriptionServiceTest {
     void sameClientSegmentIdIsIdempotent() {
         when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Pergunta um"));
         UUID clientId = UUID.randomUUID();
-        ChunkTranscriptionResponse first = transcriptionService.processAudioChunk(chunk(clientId), orgId);
+        ChunkTranscriptionResponse first = transcriptionService.processAudioChunk(chunk(clientId), orgId, userId);
         when(segmentRepository.findById(first.getSegments().get(0).getId())).thenReturn(Optional.of(first.getSegments().get(0)));
 
-        ChunkTranscriptionResponse second = transcriptionService.processAudioChunk(chunk(clientId), orgId);
+        ChunkTranscriptionResponse second = transcriptionService.processAudioChunk(chunk(clientId), orgId, userId);
 
         assertThat(second.isDuplicate()).isTrue();
         assertThat(second.getStatus()).isEqualTo("TRANSCRIBED");
@@ -186,8 +194,8 @@ class TranscriptionServiceTest {
                 .thenReturn(new TranscriptionChainResult(TranscriptionChainResult.Status.FAILED, null, List.of(), List.of()))
                 .thenReturn(transcribed("DEEPGRAM", "agora foi"));
 
-        transcriptionService.processAudioChunk(chunk(clientId), orgId);
-        ChunkTranscriptionResponse retry = transcriptionService.processAudioChunk(chunk(clientId), orgId);
+        transcriptionService.processAudioChunk(chunk(clientId), orgId, userId);
+        ChunkTranscriptionResponse retry = transcriptionService.processAudioChunk(chunk(clientId), orgId, userId);
 
         assertThat(retry.getStatus()).isEqualTo("TRANSCRIBED");
         assertThat(retry.isDuplicate()).isFalse();
@@ -197,7 +205,7 @@ class TranscriptionServiceTest {
     @Test
     @DisplayName("Reunião de outra organização responde como inexistente (404), sem transcrever")
     void otherOrganizationIsNotFound() {
-        assertThatThrownBy(() -> transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), UUID.randomUUID()))
+        assertThatThrownBy(() -> transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), UUID.randomUUID(), userId))
                 .isInstanceOf(ResourceNotFoundException.class);
         verify(speechToTextRouter, never()).transcribe(any(), any());
     }
@@ -209,7 +217,7 @@ class TranscriptionServiceTest {
                 TranscriptSegment.builder().originalText("Pergunta repetida").startTimeMs(0L).endTimeMs(1L).build()));
         when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "pergunta repetida"));
 
-        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId);
+        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
 
         assertThat(response.isDuplicate()).isTrue();
         verify(segmentRepository, never()).save(any());

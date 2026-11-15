@@ -28,6 +28,8 @@ public class MeetingResponse {
     private String googleCalendarEventId;
     private CaptureMechanism captureMechanism;
     private String language;
+    /** Papel do usuário na entrevista (CANDIDATE padrão, INTERVIEWER). */
+    private com.meetingintelligence.domain.enums.InterviewRole userInterviewRole;
     private OffsetDateTime createdAt;
 }
 

@@ -2,6 +2,8 @@
 
 Pré-requisitos: spec 002 `T-06`/`T-07` (colunas e contrato), spec 001 `T-07` (envio de `audioSource`).
 
+**Status (2026-11-15):** T-01 a T-06 concluídas. Evidência: `SpeakerAttributionServiceTest` 8, `TranscriptionServiceTest` 8, `TranscriptionChunkIT` 6 (PostgreSQL real, inclui microfone→SELF e texto digitado→MANUAL), `speaker.test.ts` 4. Backend 69 testes verdes; frontend 47. Validação em reunião real: pendente.
+
 | ID | Tarefa | Depende de | Concluída quando |
 |---|---|---|---|
 | T-01 | Enums `AudioSource` e `SpeakerRole`; migration V8; campos na entidade | 002-T06 | Migration aplicada com dados existentes; teste de mapeamento JPA |

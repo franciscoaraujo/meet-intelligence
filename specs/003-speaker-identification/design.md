@@ -48,3 +48,13 @@ Métrica `segments.attributed{audioSource,role}`. Log `DEBUG` com o papel decidi
 | Origem do áudio como evidência primária | Heurística de atividade (atual); diarização por IA em tudo | É a evidência mais forte disponível, com custo zero; atende "não afirmar sem evidência" |
 | Diarização só quando o provedor já a fornece | Implementar diarização própria agora | A spec pede viabilidade demonstrada; com fontes separadas, o caso principal (candidato × entrevistador) já se resolve |
 | Papel do usuário configurável por reunião | Fixar "candidato" | O produto também atende reuniões gerais e o lado do entrevistador |
+
+## Mudanças na implementação (2026-11-15)
+| Design original | Implementado | Justificativa |
+|---|---|---|
+| TAB com diarização do provedor → "Participante remoto N" | TAB é sempre "Participante remoto (Meet)", sem participante vinculado | No ao vivo, cada trecho (5-12 s) é diarizado isoladamente: o "falante 0" de um trecho não é o mesmo do seguinte. Numerar remotos entre trechos afirmaria identidade sem evidência, o que a RN-01 proíbe. A numeração por diarização fica só para gravações enviadas, em que o arquivo inteiro é diarizado de uma vez. |
+| `PATCH /meetings/{id}` com `userInterviewRole` | `PATCH /meetings/{id}/interview-role?role=` | Segue o padrão do endpoint de status já existente |
+| Texto digitado com papel `UNKNOWN` por padrão | Papel enviado pelo cliente conforme a opção escolhida (o usuário = SELF; Entrevistador/Convidado = REMOTE) | Mantém o seletor de falante do envio manual; confiança 1,0 por ser escolha explícita |
+| — | Fusão de falas só entre segmentos da **mesma origem** | Antecipa a RF-11 da spec 005: aba e microfone nunca se misturam numa fala |
+| — | Nome fixo "Francisco Araújo" removido do frontend | O falante padrão do envio manual vem do usuário logado (P-08) |
+| — | `/live-text` verifica a organização da reunião (404) | Mesmo critério aplicado ao `/chunk` na spec 002 |

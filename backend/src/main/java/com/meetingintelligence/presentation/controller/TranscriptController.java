@@ -4,6 +4,7 @@ import com.meetingintelligence.application.dto.AudioChunkCommand;
 import com.meetingintelligence.application.dto.ChunkTranscriptionResponse;
 import com.meetingintelligence.application.service.TranscriptionService;
 import com.meetingintelligence.domain.speech.AudioSource;
+import com.meetingintelligence.domain.speech.SpeakerRole;
 import com.meetingintelligence.infrastructure.security.UserPrincipal;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import com.meetingintelligence.domain.entity.TranscriptSegment;
@@ -68,20 +69,28 @@ public class TranscriptController {
                 request.getCaptureStartMs(),
                 request.getCaptureEndMs(),
                 request.getSpeakerLabel());
-        return ResponseEntity.ok(transcriptionService.processAudioChunk(command, currentUser.getOrganizationId()));
+        return ResponseEntity.ok(transcriptionService.processAudioChunk(
+                command, currentUser.getOrganizationId(), currentUser.getId()));
     }
 
     @PostMapping("/live-text")
-    @Operation(summary = "Registrar fala capturada ao vivo no navegador", description = "Recebe fala transcrita em tempo real (Web Speech API / Microfone) e aciona o pipeline de IA")
+    @Operation(summary = "Registrar fala reconhecida no navegador ou digitada",
+            description = "audioSource=MIC (Web Speech do microfone, atribuído ao usuário) ou MANUAL (texto digitado, "
+                    + "com o falante escolhido em speakerLabel/speakerRole). Sem audioSource: MANUAL.")
     public ResponseEntity<TranscriptSegment> processLiveText(
             @PathVariable UUID meetingId,
-            @RequestBody LiveTextRequest request) {
+            @RequestBody LiveTextRequest request,
+            @AuthenticationPrincipal UserPrincipal currentUser) {
         if (request.getText() == null || request.getText().isBlank()) {
             return ResponseEntity.badRequest().build();
         }
         TranscriptSegment segment = transcriptionService.processLiveTextSegment(
                 meetingId,
+                currentUser.getOrganizationId(),
+                currentUser.getId(),
                 request.getSpeakerLabel(),
+                request.getSpeakerRole(),
+                request.getAudioSource(),
                 request.getText(),
                 request.getStartTimeMs(),
                 request.getEndTimeMs()
@@ -90,13 +99,24 @@ public class TranscriptController {
     }
 
     @PatchMapping("/{segmentId}")
-    @Operation(summary = "Corrigir texto da transcrição", description = "Permite ajuste manual de palavras incorretas preservando o original")
+    @Operation(summary = "Corrigir texto ou falante da transcrição",
+            description = "correctedText corrige o texto (o original é preservado); speakerLabel/speakerRole corrigem "
+                    + "quem falou (confiança passa a 1,0)")
     public ResponseEntity<TranscriptSegment> correctSegment(
             @PathVariable UUID meetingId,
             @PathVariable UUID segmentId,
             @RequestBody Map<String, String> body) {
-        String newText = body.get("correctedText");
-        TranscriptSegment segment = transcriptionService.correctSegment(segmentId, newText);
+        TranscriptSegment segment = null;
+        if (body.containsKey("speakerLabel")) {
+            SpeakerRole role = body.get("speakerRole") != null ? SpeakerRole.valueOf(body.get("speakerRole")) : null;
+            segment = transcriptionService.updateSegmentSpeaker(segmentId, body.get("speakerLabel"), role);
+        }
+        if (body.containsKey("correctedText")) {
+            segment = transcriptionService.correctSegment(segmentId, body.get("correctedText"));
+        }
+        if (segment == null) {
+            throw new IllegalArgumentException("Informe correctedText e/ou speakerLabel.");
+        }
         return ResponseEntity.ok(segment);
     }
 
@@ -115,6 +135,9 @@ public class TranscriptController {
     @Data
     public static class LiveTextRequest {
         private String speakerLabel;
+        /** Spec 003: MIC (Web Speech) ou MANUAL (digitado); papel escolhido para texto digitado. */
+        private AudioSource audioSource;
+        private SpeakerRole speakerRole;
         private String text;
         private long startTimeMs;
         private long endTimeMs;

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic,
+  MonitorSpeaker,
   Square,
   Search,
   Upload,
@@ -26,6 +27,8 @@ import { MeetingWebSocketService } from '../services/websocket';
 import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse } from '../types';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
 import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
+import { manualSpeakerOptions, segmentSpeakerView, type SpeakerRole } from '../features/transcription/speaker';
+import { useAuth } from '../context/AuthContext';
 
 /**
  * Ordena a transcrição da fala mais antiga para a mais nova.
@@ -75,8 +78,10 @@ export const LiveMeetingPage: React.FC = () => {
 
   // Estados de captura de voz ao vivo (Web Speech API + Áudio da Guia do Meet) e envio direto de falas
   const [manualSpeechInput, setManualSpeechInput] = useState('');
-  const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
-  const speakerRoleRef = useRef<string>('Francisco Araújo');
+  const { user } = useAuth();
+  const speakerOptions = manualSpeakerOptions(user?.fullName);
+  const [speakerRole, setSpeakerRole] = useState(speakerOptions[0].label);
+  const speakerRoleRef = useRef<string>(speakerOptions[0].label);
   const recordingSecondsRef = useRef<number>(0);
 
   // Tabs do Painel Central
@@ -104,7 +109,8 @@ export const LiveMeetingPage: React.FC = () => {
       if (id) setTimeout(() => refreshAiState(id), 1000);
     },
     onWebSpeechText: (text) => {
-      void sendLiveSpeechSegment(text, speakerRoleRef.current);
+      // Web Speech: fala do microfone, atribuída ao usuário pelo backend (spec 003)
+      void sendLiveSpeechSegment(text, speakerOptions[0].label, 'MIC', 'SELF');
     },
     micSpeakerLabel: () => speakerRoleRef.current,
   });
@@ -243,7 +249,12 @@ export const LiveMeetingPage: React.FC = () => {
     return () => clearInterval(syncTimer);
   }, [id]);
 
-  const sendLiveSpeechSegment = async (text: string, speaker = speakerRole) => {
+  const sendLiveSpeechSegment = async (
+    text: string,
+    speaker = speakerRole,
+    audioSource: 'MIC' | 'MANUAL' = 'MANUAL',
+    role: SpeakerRole = speakerOptions.find((o) => o.label === speaker)?.role ?? 'UNKNOWN',
+  ) => {
     if (!id || !text.trim()) return;
     const cleanText = text.trim();
     const startMs = recordingSecondsRef.current * 1000;
@@ -258,12 +269,16 @@ export const LiveMeetingPage: React.FC = () => {
       startTimeMs: startMs,
       endTimeMs: startMs + 4000,
       confidence: 0.99,
+      audioSource,
+      speakerRole: role,
     };
     setTranscripts((prev) => [...prev, optimisticSegment]);
 
     try {
       const res = await api.post(`/meetings/${id}/transcripts/live-text`, {
         speakerLabel: speaker,
+        speakerRole: role,
+        audioSource,
         text: cleanText,
         startTimeMs: startMs,
         endTimeMs: startMs + 4000,
@@ -293,7 +308,18 @@ export const LiveMeetingPage: React.FC = () => {
     if (!manualSpeechInput.trim()) return;
     const text = manualSpeechInput;
     setManualSpeechInput('');
-    await sendLiveSpeechSegment(text, speakerRoleRef.current);
+    await sendLiveSpeechSegment(text, speakerRoleRef.current, 'MANUAL');
+  };
+
+  /** Papel do usuário na entrevista (spec 003, RF-04). */
+  const updateInterviewRole = async (role: 'CANDIDATE' | 'INTERVIEWER') => {
+    if (!id) return;
+    try {
+      const res = await api.patch<Meeting>(`/meetings/${id}/interview-role?role=${role}`);
+      setMeeting(res.data);
+    } catch (e) {
+      console.error('Erro ao atualizar papel na entrevista:', e);
+    }
   };
 
   const toggleRecording = async () => {
@@ -616,34 +642,25 @@ export const LiveMeetingPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Seletor Rápido de Quem Está Falando Agora */}
+          {/* Papel do usuário nesta entrevista (spec 003, RF-04) */}
           <div className="px-3.5 py-2 border-b border-[#e0e3e7] bg-[#edf2fc]/60 flex items-center justify-between gap-2 shrink-0">
-            <span className="text-[11px] font-medium text-[#444746]">
-              Voz do seu microfone atribuída a:
-            </span>
+            <span className="text-[11px] font-medium text-[#444746]">Seu papel nesta entrevista:</span>
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => changeSpeakerRole('Francisco Araújo')}
-                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                  speakerRole === 'Francisco Araújo'
-                    ? 'bg-[#0b57d0] text-white shadow-2xs'
-                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
-                }`}
-              >
-                👤 Francisco Araújo (Você)
-              </button>
-              <button
-                type="button"
-                onClick={() => changeSpeakerRole('Entrevistador Técnico')}
-                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                  speakerRole === 'Entrevistador Técnico'
-                    ? 'bg-[#0b57d0] text-white shadow-2xs'
-                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
-                }`}
-              >
-                🎤 Entrevistador
-              </button>
+              {(['CANDIDATE', 'INTERVIEWER'] as const).map((r) => {
+                const selected = (meeting?.userInterviewRole ?? 'CANDIDATE') === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => updateInterviewRole(r)}
+                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                      selected ? 'bg-[#0b57d0] text-white shadow-2xs' : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
+                    }`}
+                  >
+                    {r === 'CANDIDATE' ? 'Candidato' : 'Entrevistador'}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -685,10 +702,20 @@ export const LiveMeetingPage: React.FC = () => {
                   }`}
                 >
                   <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-[#0b57d0] flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5" />
-                      {segment.speakerLabel || 'Participante'}
-                    </span>
+                    {(() => {
+                      const v = segmentSpeakerView(segment);
+                      const OriginIcon = v.origin === 'TAB' ? MonitorSpeaker : v.origin === 'MIC' ? Mic : Users;
+                      return (
+                        <span
+                          className={`font-semibold flex items-center gap-1.5 ${v.uncertain ? 'text-[#747775] italic' : 'text-[#0b57d0]'}`}
+                          title={v.title}
+                        >
+                          <OriginIcon className="w-3.5 h-3.5" />
+                          {v.label}
+                          {v.uncertain && <span className="text-[10px] font-normal">(incerto)</span>}
+                        </span>
+                      );
+                    })()}
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
@@ -698,7 +725,7 @@ export const LiveMeetingPage: React.FC = () => {
                       >
                         💡 Responder com IA
                       </button>
-                      <span className="text-[11px] font-mono text-[#444746]">{formatMs(segment.startTimeMs)}</span>
+                      <span className="text-[11px] font-mono text-[#444746]">{formatMs(segmentSpeakerView(segment).timeMs)}</span>
                       {editingSegmentId !== segment.id && (
                         <button
                           onClick={() => {
@@ -770,12 +797,14 @@ export const LiveMeetingPage: React.FC = () => {
                 <span>Locutor:</span>
                 <select
                   value={speakerRole}
-                  onChange={(e) => setSpeakerRole(e.target.value)}
+                  onChange={(e) => changeSpeakerRole(e.target.value)}
                   className="bg-white border border-[#c4c7c5] rounded-full px-2.5 py-0.5 text-[11px] font-medium text-[#1f1f1f] focus:outline-none focus:border-[#0b57d0]"
                 >
-                  <option value="Francisco Araújo">Francisco Araújo (Você)</option>
-                  <option value="Entrevistador Técnico">Entrevistador Técnico</option>
-                  <option value="Participante Convidado">Participante Convidado</option>
+                  {speakerOptions.map((o) => (
+                    <option key={o.label} value={o.label}>
+                      {o.role === 'SELF' ? `${o.label} (Você)` : o.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <span className="text-[10px] text-[#444746]">
