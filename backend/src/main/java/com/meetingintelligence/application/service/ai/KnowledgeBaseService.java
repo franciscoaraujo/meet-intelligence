@@ -1,6 +1,7 @@
 package com.meetingintelligence.application.service.ai;
 
 import com.meetingintelligence.application.dto.KnowledgeDocumentDto;
+import com.meetingintelligence.domain.ai.TextRelevance;
 import com.meetingintelligence.domain.entity.KnowledgeDocument;
 import com.meetingintelligence.domain.entity.Organization;
 import com.meetingintelligence.domain.entity.User;
@@ -17,7 +18,6 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.text.Normalizer;
 import java.util.*;
 
 /**
@@ -35,18 +35,11 @@ import java.util.*;
 public class KnowledgeBaseService {
 
     static final long MAX_FILE_BYTES = 10L * 1024 * 1024;
-    static final int MAX_STORED_CHARS = 200_000;
+    static final int MAX_STORED_CHARS = 1_500_000;
     static final int RESUME_CHAR_BUDGET = 8_000;
     static final int REFERENCE_CHAR_BUDGET = 6_000;
     static final int CHUNK_SIZE = 1_200;
 
-    private static final Set<String> STOPWORDS = Set.of(
-            "que", "para", "com", "uma", "como", "por", "mais", "dos", "das", "nos", "nas",
-            "isso", "esse", "essa", "este", "esta", "voce", "sobre", "qual", "quais", "seu",
-            "sua", "ele", "ela", "pelo", "pela", "entre", "quando", "onde", "porque", "tem",
-            "ser", "foi", "sao", "the", "and", "for", "with", "what", "how", "you", "your",
-            "pode", "fale", "explique", "me", "conte", "nao", "sim", "muito", "tambem", "ja"
-    );
 
     private final KnowledgeDocumentRepository documentRepository;
     private final OrganizationRepository organizationRepository;
@@ -176,12 +169,12 @@ public class KnowledgeBaseService {
         // Material pequeno: envia tudo, sem necessidade de ranqueamento
         if (totalChars <= REFERENCE_CHAR_BUDGET) return chunks;
 
-        Set<String> queryTerms = tokenize(query);
+        Set<String> queryTerms = TextRelevance.queryStems(query);
         if (queryTerms.isEmpty()) return List.of();
 
         List<Map.Entry<Chunk, Double>> scored = new ArrayList<>();
         for (Chunk c : chunks) {
-            double score = score(c.text(), queryTerms);
+            double score = TextRelevance.score(c.text(), queryTerms);
             if (score > 0) scored.add(Map.entry(c, score));
         }
         scored.sort((a, b) -> Double.compare(b.getValue(), a.getValue()));
@@ -199,30 +192,8 @@ public class KnowledgeBaseService {
         return result;
     }
 
-    static double score(String text, Set<String> queryTerms) {
-        Map<String, Integer> freq = new HashMap<>();
-        for (String token : normalizeForSearch(text).split("[^a-z0-9]+")) {
-            if (queryTerms.contains(token)) freq.merge(token, 1, Integer::sum);
-        }
-        double score = 0;
-        for (int count : freq.values()) score += 1 + Math.log(count);
-        return score;
-    }
 
-    static Set<String> tokenize(String text) {
-        Set<String> terms = new HashSet<>();
-        if (text == null) return terms;
-        for (String token : normalizeForSearch(text).split("[^a-z0-9]+")) {
-            if (token.length() >= 3 && !STOPWORDS.contains(token)) terms.add(token);
-        }
-        return terms;
-    }
 
-    static String normalizeForSearch(String text) {
-        return Normalizer.normalize(text, Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "")
-                .toLowerCase(Locale.ROOT);
-    }
 
     /** Divide o texto em trechos de ~size caracteres, preferindo quebrar em parágrafos/frases. */
     static List<String> splitIntoChunks(String text, int size) {

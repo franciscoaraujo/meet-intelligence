@@ -107,6 +107,32 @@ class KnowledgeBaseServiceTest {
     }
 
     @Test
+    @DisplayName("Relevância casa variações de palavras e termos PT com material em inglês")
+    void relevanceMatchesStemsAndTranslations() {
+        var stems = com.meetingintelligence.domain.ai.TextRelevance.queryStems(
+                "Como você projetaria um limitador de taxa para transações distribuídas?");
+
+        assertThat(com.meetingintelligence.domain.ai.TextRelevance.score(
+                "Step 1 - Design a rate limiter using the token bucket algorithm", stems)).isPositive();
+        assertThat(com.meetingintelligence.domain.ai.TextRelevance.score(
+                "Garantia de consistência distribuída com Transactional Outbox", stems)).isPositive();
+        assertThat(com.meetingintelligence.domain.ai.TextRelevance.score(
+                "Texto sem nenhuma relação com o tema perguntado", stems)).isZero();
+    }
+
+    @Test
+    @DisplayName("Divide currículo sem linhas em branco em frases específicas")
+    void splitsResumeIntoSentences() {
+        var sentences = com.meetingintelligence.domain.ai.TextRelevance.sentences(
+                "Atuação com RabbitMQ e AWS.\nDesenvolvimento de APIs\nem Spring Boot. Uso de Kafka em eventos.", 320);
+
+        assertThat(sentences).containsExactly(
+                "Atuação com RabbitMQ e AWS.",
+                "Desenvolvimento de APIs em Spring Boot.",
+                "Uso de Kafka em eventos.");
+    }
+
+    @Test
     @DisplayName("Extrai texto de DOCX e rejeita formatos não suportados")
     void extractsDocxAndRejectsUnknown() throws Exception {
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();

@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetingintelligence.domain.ai.LLMProvider;
 import com.meetingintelligence.domain.ai.LLMRequest;
 import com.meetingintelligence.domain.ai.LLMResponse;
+import com.meetingintelligence.domain.ai.TextRelevance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -601,9 +602,10 @@ public class GeminiLlmProvider implements LLMProvider {
     }
 
     /**
-     * Monta uma resposta a partir do bloco &lt;knowledge_base&gt; do prompt, sem LLM:
-     * perguntas pessoais recebem o trecho do currículo mais relacionado; as demais,
-     * os parágrafos mais relevantes do material de referência. Retorna null se nada se aplica.
+     * Monta uma resposta a partir do bloco &lt;knowledge_base&gt; do prompt, sem LLM.
+     * Seleciona as frases do currículo e os trechos do material de referência mais
+     * relacionados à pergunta; perguntas pessoais priorizam o currículo, perguntas
+     * técnicas priorizam o material. Retorna null se nada for relevante.
      */
     String answerFromKnowledgeBase(String prompt, String question) {
         if (prompt == null || question == null || question.isBlank()) return null;
@@ -612,61 +614,119 @@ public class GeminiLlmProvider implements LLMProvider {
         if (start == -1 || end <= start) return null;
         String kb = prompt.substring(start, end);
 
-        Set<String> terms = searchTerms(question);
+        Set<String> stems = TextRelevance.queryStems(question);
         boolean personal = isPersonalQuestion(question);
 
-        List<String[]> scoredParagraphs = new java.util.ArrayList<>(); // [score, tipo, texto]
-        String firstResume = null;
+        List<ScoredText> resumeHits = new java.util.ArrayList<>();
+        List<ScoredText> referenceHits = new java.util.ArrayList<>();
+        String resumeSummary = null;
+
         java.util.regex.Matcher m = KB_DOCUMENT.matcher(kb);
         while (m.find()) {
-            String tipo = m.group(1);
-            String body = m.group(3).trim();
-            boolean isResume = tipo.startsWith("CURRÍCULO");
-            if (isResume && firstResume == null) firstResume = body;
-            if (personal != isResume) continue;
-            for (String paragraph : body.split("\\n\\s*\\n|\\n(?=[•\\-*])")) {
-                String p = paragraph.trim();
-                if (p.length() < 20) continue;
-                int score = 0;
-                String norm = java.text.Normalizer.normalize(p.toLowerCase(), java.text.Normalizer.Form.NFD)
-                        .replaceAll("\\p{M}", "");
-                for (String t : terms) if (norm.contains(t)) score++;
-                if (score > 0) scoredParagraphs.add(new String[]{String.valueOf(score), tipo, p});
+            boolean isResume = m.group(1).startsWith("CURRÍCULO");
+            String body = isResume
+                    ? TextRelevance.stripContactInfo(m.group(3)).replaceAll("(?i)p[aá]gina \\d+ de \\d+", "")
+                    : m.group(3);
+            List<String> sentences = TextRelevance.sentences(body, isResume ? 320 : 450);
+            if (isResume && resumeSummary == null) resumeSummary = profileSummary(sentences);
+            for (int i = 0; i < sentences.size(); i++) {
+                double score = TextRelevance.score(sentences.get(i), stems);
+                if (score <= 0) continue;
+                if (isResume) {
+                    resumeHits.add(new ScoredText(score, i, sentences.get(i)));
+                } else {
+                    // Para o material, leva a frase relevante e a seguinte para dar contexto
+                    String passage = sentences.get(i) + (i + 1 < sentences.size() ? " " + sentences.get(i + 1) : "");
+                    referenceHits.add(new ScoredText(score, i, passage));
+                }
             }
         }
 
-        scoredParagraphs.sort((a, b) -> Integer.parseInt(b[0]) - Integer.parseInt(a[0]));
+        // Pergunta geral sobre o candidato ("fale sobre você", "sua trajetória"): resumo do perfil
+        if (personal && isGeneralProfileQuestion(stems) && resumeSummary != null) {
+            return "💡 RESPOSTA SUGERIDA (com base no seu currículo):\n" + resumeSummary
+                    + "\n\n(Modo simulação: trechos selecionados dos seus documentos. Configure uma API Key de IA para uma resposta redigida.)";
+        }
 
+        List<ScoredText> topResume = top(resumeHits, 4, true);
+        List<ScoredText> topReference = top(referenceHits, 2, false);
+
+        String resumeBlock = null;
+        if (!topResume.isEmpty()) {
+            StringBuilder sb = new StringBuilder(personal
+                    ? "💡 RESPOSTA SUGERIDA (com base no seu currículo):\n"
+                    : "💼 Exemplos da sua experiência (currículo):\n");
+            topResume.forEach(t -> sb.append("• ").append(t.text()).append("\n"));
+            resumeBlock = sb.toString().trim();
+        } else if (personal && topReference.isEmpty() && resumeSummary != null) {
+            resumeBlock = "💡 RESPOSTA SUGERIDA (com base no seu currículo):\n" + resumeSummary;
+        }
+
+        String referenceBlock = null;
+        if (!topReference.isEmpty()) {
+            StringBuilder sb = new StringBuilder("📚 Do seu material de referência:\n");
+            topReference.forEach(t -> sb.append("• ").append(t.text()).append("\n"));
+            referenceBlock = sb.toString().trim();
+        }
+
+        if (resumeBlock == null && referenceBlock == null) return null;
+
+        List<String> parts = new java.util.ArrayList<>();
         if (personal) {
-            StringBuilder sb = new StringBuilder("💡 RESPOSTA SUGERIDA (com base no seu currículo):\n");
-            if (!scoredParagraphs.isEmpty()) {
-                scoredParagraphs.stream().limit(3).forEach(p -> sb.append("• ").append(p[2]).append("\n"));
-            } else if (firstResume != null) {
-                sb.append(firstResume.length() > 1200 ? firstResume.substring(0, 1200) + "…" : firstResume);
-            } else {
-                return null;
-            }
-            sb.append("\n(Modo simulação: configure uma API Key de IA para respostas redigidas em primeira pessoa.)");
-            return sb.toString().trim();
+            if (resumeBlock != null) parts.add(resumeBlock);
+            if (referenceBlock != null) parts.add(referenceBlock);
+        } else {
+            if (referenceBlock != null) parts.add(referenceBlock);
+            if (resumeBlock != null) parts.add(resumeBlock);
         }
-
-        if (scoredParagraphs.isEmpty()) return null;
-        StringBuilder sb = new StringBuilder("📚 Do seu material de referência:\n");
-        scoredParagraphs.stream().limit(2).forEach(p ->
-                sb.append("• ").append(p[2].length() > 700 ? p[2].substring(0, 700) + "…" : p[2]).append("\n"));
-        return sb.toString().trim();
+        parts.add("(Modo simulação: trechos selecionados dos seus documentos. Configure uma API Key de IA para uma resposta redigida.)");
+        return String.join("\n\n", parts);
     }
 
-    private static Set<String> searchTerms(String text) {
-        Set<String> stop = Set.of("que", "para", "com", "uma", "como", "por", "mais", "voce", "sobre", "qual",
-                "quais", "seu", "sua", "fale", "explique", "conte", "pode", "isso", "esse", "essa", "nao", "tem");
-        Set<String> terms = new java.util.HashSet<>();
-        String norm = java.text.Normalizer.normalize(text.toLowerCase(), java.text.Normalizer.Form.NFD)
-                .replaceAll("\\p{M}", "");
-        for (String t : norm.split("[^a-z0-9]+")) {
-            if (t.length() >= 3 && !stop.contains(t)) terms.add(t);
+    private static final Set<String> GENERAL_PROFILE_STEMS = Set.of(
+            "profis", "trajet", "carrei", "aprese", "mesmo", "perfil", "curric", "pouco", "histor");
+
+    /** Verdadeiro quando a pergunta não cita nenhum tema específico além de termos de perfil. */
+    private static boolean isGeneralProfileQuestion(Set<String> stems) {
+        return GENERAL_PROFILE_STEMS.containsAll(stems);
+    }
+
+    private record ScoredText(double score, int position, String text) {}
+
+    /** Seleciona os n melhores, sem duplicatas; opcionalmente reordena pela posição no documento. */
+    private static List<ScoredText> top(List<ScoredText> hits, int n, boolean documentOrder) {
+        List<ScoredText> sorted = new java.util.ArrayList<>(hits);
+        sorted.sort((a, b) -> Double.compare(b.score(), a.score()));
+        List<ScoredText> result = new java.util.ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (ScoredText t : sorted) {
+            if (result.size() >= n) break;
+            if (seen.add(t.text())) result.add(t);
         }
-        return terms;
+        if (documentOrder) result.sort(java.util.Comparator.comparingInt(ScoredText::position));
+        return result;
+    }
+
+    /** Resumo do perfil: as frases após o título "PERFIL"/"RESUMO", ou o início do currículo. */
+    private static String profileSummary(List<String> sentences) {
+        int startIdx = 0;
+        for (int i = 0; i < sentences.size(); i++) {
+            String n = TextRelevance.normalize(sentences.get(i));
+            if (n.contains("perfil") || n.contains("resumo profissional") || n.contains("sobre mim")) {
+                startIdx = i;
+                break;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = startIdx; i < sentences.size() && sb.length() < 900; i++) {
+            String sentence = sentences.get(i);
+            if (i == startIdx) {
+                int at = TextRelevance.normalize(sentence).indexOf("perfil");
+                if (at > 0) sentence = sentence.substring(at);
+            }
+            sb.append(sentence).append(' ');
+        }
+        return sb.toString().trim();
     }
 
     private String fetchWikipediaSummaryPtBr(String rawQuery) {
