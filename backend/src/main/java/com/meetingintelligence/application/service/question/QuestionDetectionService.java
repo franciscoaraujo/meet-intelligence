@@ -183,15 +183,18 @@ public class QuestionDetectionService {
         List<QuestionDeduplicator.Candidate> candidates = recent.stream()
                 .filter(q -> q.getStatus() != InterviewQuestion.Status.DISMISSED)
                 .map(q -> new QuestionDeduplicator.Candidate(q.getId(), q.getQuestionText(),
-                        q.getCreatedAt() != null ? q.getCreatedAt().toInstant().toEpochMilli() : now))
+                        q.getCreatedAt() != null ? q.getCreatedAt().toInstant().toEpochMilli() : now, q.getContextText()))
                 .toList();
-        QuestionDeduplicator.Decision decision = dedup.decide(u.text(), now, candidates);
+        // Spec 015: a pergunta manual já contém toda a fala desde a anterior (RN-02)
+        String context = forced ? null : leadInContext(u, recent);
+        QuestionDeduplicator.Decision decision = dedup.decide(u.text(), context, now, candidates);
 
         if (decision.kind() == QuestionDeduplicator.Kind.NEW) {
             InterviewQuestion q = questions.save(InterviewQuestion.builder()
                     .meetingId(u.meetingId())
                     .status(InterviewQuestion.Status.DETECTED)
                     .questionText(u.text())
+                    .contextText(context)
                     .utteranceType(type)
                     .score(BigDecimal.valueOf(c.score()))
                     .autoAnswer(autoAnswer)
@@ -200,7 +203,8 @@ public class QuestionDetectionService {
                     .captureEndMs(u.captureEndMs())
                     .build());
             meters.counter("questions.detected", "type", type.name()).increment();
-            log.info("Pergunta detectada: id={} type={} score={} auto={}", q.getId(), type, c.score(), autoAnswer);
+            log.info("Pergunta detectada: id={} type={} score={} auto={} contexto_chars={}", q.getId(), type, c.score(),
+                    autoAnswer, context == null ? 0 : context.length());
             publish(q);
             if (autoAnswer) requestAnswer(q);
             return;
@@ -213,6 +217,7 @@ public class QuestionDetectionService {
         ids.addAll(u.segmentIds());
         existing.setSourceSegmentIds(ids.toArray(UUID[]::new));
         if (u.captureEndMs() != null) existing.setCaptureEndMs(u.captureEndMs());
+        if (existing.getContextText() == null && context != null) existing.setContextText(context);
         boolean reanswer = decision.kind() == QuestionDeduplicator.Kind.SAME_QUESTION_GREW
                 && (existing.isAutoAnswer() || autoAnswer);
         if (autoAnswer) existing.setAutoAnswer(true);
@@ -266,6 +271,55 @@ public class QuestionDetectionService {
         Long start = !remote.isEmpty() ? remote.get(0).getCaptureStartMs() : open.captureStartMs();
         Long end = open != null ? open.captureEndMs() : remote.get(remote.size() - 1).getCaptureEndMs();
         return new Utterance(meetingId, AudioSource.TAB, SpeakerRole.REMOTE, text.toString(), ids, start, end, clock.getAsLong());
+    }
+
+    /** Contexto da pergunta (spec 015, RF-01): janela, número de trechos e tamanho máximos. */
+    static final long LEAD_IN_WINDOW_MS = 90_000;
+    static final int LEAD_IN_MAX_SEGMENTS = 8;
+    static final int LEAD_IN_MAX_CHARS = 1000;
+
+    /**
+     * Fala do entrevistador logo antes da pergunta: trechos remotos sem eco, depois da pergunta anterior
+     * não descartada e da última fala do candidato, nos últimos 90 s, e antes do primeiro trecho da
+     * própria pergunta. Mantém o fim (o mais perto da pergunta) dentro dos limites. Nulo se não houver.
+     */
+    String leadInContext(Utterance u, List<InterviewQuestion> recent) {
+        OffsetDateTime boundary = recent.stream()
+                .filter(q -> q.getStatus() != InterviewQuestion.Status.DISMISSED && q.getCreatedAt() != null)
+                .map(InterviewQuestion::getCreatedAt)
+                .findFirst().orElse(null);
+        OffsetDateTime windowStart = OffsetDateTime.ofInstant(Instant.ofEpochMilli(clock.getAsLong() - LEAD_IN_WINDOW_MS),
+                java.time.ZoneOffset.UTC);
+        OffsetDateTime from = boundary == null || boundary.isBefore(windowStart) ? windowStart : boundary;
+
+        List<TranscriptSegment> before = new ArrayList<>();
+        boolean reachedQuestion = false;
+        for (TranscriptSegment s : segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(u.meetingId())) {
+            if (u.segmentIds().contains(s.getId())) {
+                reachedQuestion = true;
+                break;
+            }
+            if (s.isEchoSuspected() || s.getCreatedAt() == null || !s.getCreatedAt().isAfter(from)) continue;
+            if (s.getSpeakerRole() == SpeakerRole.SELF) before.clear(); // o candidato falou: o cenário anterior acabou
+            else if (s.getSpeakerRole() == SpeakerRole.REMOTE) before.add(s);
+        }
+        if (!reachedQuestion || before.isEmpty()) return null;
+
+        java.util.Deque<String> parts = new java.util.ArrayDeque<>();
+        int chars = 0;
+        for (int i = before.size() - 1; i >= 0 && parts.size() < LEAD_IN_MAX_SEGMENTS; i--) {
+            TranscriptSegment s = before.get(i);
+            String text = (s.getCorrectedText() != null ? s.getCorrectedText() : s.getOriginalText());
+            if (text == null || text.isBlank()) continue;
+            text = text.trim();
+            if (chars + text.length() > LEAD_IN_MAX_CHARS) {
+                if (parts.isEmpty()) parts.addFirst("…" + text.substring(text.length() - LEAD_IN_MAX_CHARS + 1));
+                break;
+            }
+            parts.addFirst(text);
+            chars += text.length() + 1;
+        }
+        return parts.isEmpty() ? null : String.join(" ", parts);
     }
 
     private Utterance recentRemoteSpeech(UUID meetingId) {

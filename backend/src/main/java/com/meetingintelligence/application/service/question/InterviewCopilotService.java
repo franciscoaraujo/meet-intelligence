@@ -80,8 +80,12 @@ public class InterviewCopilotService implements InterviewCopilot {
             Meeting meeting = meetings.findById(question.getMeetingId()).orElseThrow();
             updateStatus(question, InterviewQuestion.Status.ANSWERING, null);
 
+            // Spec 015: o cenário dito antes da pergunta também orienta a busca e a validação
+            String context = question.getContextText();
+            String questionWithContext = context == null || context.isBlank()
+                    ? question.getQuestionText() : context + " " + question.getQuestionText();
             String kb = meeting.getOrganization() != null
-                    ? knowledgeBase.buildContext(meeting.getOrganization().getId(), question.getQuestionText()) : "";
+                    ? knowledgeBase.buildContext(meeting.getOrganization().getId(), questionWithContext) : "";
             String summary = summaries.findByMeetingId(meeting.getId()).map(MeetingSummary::getExecutiveSummary).orElse("");
             var recent = segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meeting.getId());
 
@@ -93,7 +97,7 @@ public class InterviewCopilotService implements InterviewCopilot {
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 LLMRequest request = LLMRequest.builder()
                         .systemPrompt(prompts.systemPrompt())
-                        .userPrompt(prompts.userPrompt(question.getQuestionText(), question.getUtteranceType().name(),
+                        .userPrompt(prompts.userPrompt(question.getQuestionText(), context, question.getUtteranceType().name(),
                                 question.getScore().doubleValue(), recent, meeting.getUserInterviewRole(), summary, kb, correction,
                                 manual, meeting.getLanguage(), meeting.getAnswerStyle()))
                         .maxTokens(2048)
@@ -158,7 +162,7 @@ public class InterviewCopilotService implements InterviewCopilot {
                     return;
                 }
 
-                List<String> problems = CopilotAnswerValidator.validate(answer, question.getQuestionText(), kb);
+                List<String> problems = CopilotAnswerValidator.validate(answer, questionWithContext, kb);
                 if (!problems.isEmpty()) {
                     correction = String.join("; ", problems);
                     lastFailure = "VALIDATION_FAILED";
@@ -228,7 +232,10 @@ public class InterviewCopilotService implements InterviewCopilot {
                     .speakerReference("Entrevistador")
                     .build();
         }
-        String title = "❓ " + question.getQuestionText();
+        // Spec 015: com contexto, o título é a pergunta completa escrita pelo copiloto
+        String shownQuestion = question.getContextText() != null && answer.interpretedQuestion() != null
+                && !answer.interpretedQuestion().isBlank() ? answer.interpretedQuestion().trim() : question.getQuestionText();
+        String title = "❓ " + shownQuestion;
         insight.setTitle(title.length() > 480 ? title.substring(0, 480) + "…" : title);
         insight.setDescription(answer.toDisplayText());
         insight.setMetadata(metadata);

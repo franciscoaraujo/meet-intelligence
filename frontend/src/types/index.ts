@@ -99,6 +99,8 @@ export interface InterviewQuestion {
   meetingId: string;
   status: 'DETECTED' | 'ANSWERING' | 'ANSWERED' | 'FAILED' | 'DISMISSED';
   questionText: string;
+  /** Spec 015: fala do entrevistador logo antes da pergunta. */
+  contextText?: string | null;
   utteranceType: string;
   score: number;
   autoAnswer: boolean;

@@ -14,7 +14,16 @@ public final class QuestionDeduplicator {
 
     public enum Kind { NEW, SAME_QUESTION, SAME_QUESTION_GREW }
 
-    public record Candidate(UUID id, String text, long createdAtMs) {}
+    /** @param context fala do entrevistador antes da pergunta (spec 015); pode ser nula */
+    public record Candidate(UUID id, String text, long createdAtMs, String context) {
+        public Candidate(UUID id, String text, long createdAtMs) {
+            this(id, text, createdAtMs, null);
+        }
+    }
+
+    /** Contexto novo com assunto diferente: ao menos 3 radicais, menos da metade já presentes (spec 015, RF-04). */
+    static final int NEW_TOPIC_MIN_STEMS = 3;
+    static final double NEW_TOPIC_MAX_OVERLAP = 0.5;
 
     public record Decision(Kind kind, UUID existingId, double similarity) {}
 
@@ -33,6 +42,14 @@ public final class QuestionDeduplicator {
     }
 
     public Decision decide(String newText, long nowMs, List<Candidate> recent) {
+        return decide(newText, null, nowMs, recent);
+    }
+
+    /**
+     * Spec 015: a mesma frase curta ("como você resolveria isso?") depois de um cenário diferente é
+     * outra pergunta, mesmo com o texto igual.
+     */
+    public Decision decide(String newText, String newContext, long nowMs, List<Candidate> recent) {
         Candidate best = null;
         double bestSimilarity = 0;
         for (Candidate c : recent) {
@@ -46,11 +63,24 @@ public final class QuestionDeduplicator {
         if (best == null || bestSimilarity < similarityThreshold) {
             return new Decision(Kind.NEW, null, bestSimilarity);
         }
+        if (introducesNewTopic(newContext, best)) {
+            return new Decision(Kind.NEW, null, bestSimilarity);
+        }
         // Crescimento medido pelo conteúdo (sem palavras de enquadramento como "pode explicar de novo")
         int oldSize = contentWithoutFraming(best.text()).size();
         boolean grew = oldSize > 0
                 && (contentWithoutFraming(newText).size() - oldSize) / (double) oldSize >= growthToReanswer;
         return new Decision(grew ? Kind.SAME_QUESTION_GREW : Kind.SAME_QUESTION, best.id(), bestSimilarity);
+    }
+
+    static boolean introducesNewTopic(String newContext, Candidate previous) {
+        if (newContext == null || newContext.isBlank()) return false;
+        var stems = contentWithoutFraming(newContext);
+        if (stems.size() < NEW_TOPIC_MIN_STEMS) return false;
+        var known = new java.util.HashSet<>(contentWithoutFraming(previous.text()));
+        if (previous.context() != null) known.addAll(contentWithoutFraming(previous.context()));
+        long overlap = stems.stream().filter(known::contains).count();
+        return (double) overlap / stems.size() < NEW_TOPIC_MAX_OVERLAP;
     }
 
     /**

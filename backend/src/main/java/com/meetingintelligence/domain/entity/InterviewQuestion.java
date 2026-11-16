@@ -38,6 +38,10 @@ public class InterviewQuestion {
     @Column(name = "question_text", nullable = false, columnDefinition = "TEXT")
     private String questionText;
 
+    /** Spec 015: fala do entrevistador logo antes da pergunta (o cenário a que ela se refere). */
+    @Column(name = "context_text", columnDefinition = "TEXT")
+    private String contextText;
+
     @Enumerated(EnumType.STRING)
     @Column(name = "utterance_type", nullable = false, length = 30)
     private UtteranceType utteranceType;

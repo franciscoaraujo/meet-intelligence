@@ -34,6 +34,29 @@ describe('InterviewAnswerCard', () => {
     expect(screen.queryByText('Simulação')).toBeNull();
   });
 
+  it('spec 015 CA-05: pergunta completa como título e o contexto abaixo, expansível', () => {
+    const withFull = insight();
+    const meta = JSON.parse(withFull.metadata as string);
+    meta.copilotAnswer.question = 'Como você evitaria cobrança duplicada no consumidor Kafka?';
+    withFull.metadata = JSON.stringify(meta);
+    const q = question({ questionText: 'Como você resolveria isso?', contextText: 'O consumidor do Kafka processa a mesma mensagem duas vezes.' });
+
+    render(<InterviewAnswerCard question={q} insight={withFull} formatMs={formatMs} />);
+
+    expect(screen.getByRole('heading').textContent).toBe('Como você evitaria cobrança duplicada no consumidor Kafka?');
+    const context = screen.getByTestId('question-context');
+    expect(context.textContent).toContain('O consumidor do Kafka processa a mesma mensagem duas vezes.');
+    expect(context.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(context);
+    expect(context.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('spec 015: sem contexto, não mostra a linha "Contexto" e o título é a pergunta falada', () => {
+    render(<InterviewAnswerCard question={question()} insight={insight()} formatMs={formatMs} />);
+    expect(screen.queryByTestId('question-context')).toBeNull();
+    expect(screen.getByRole('heading').textContent).toBe('Como você garante consistência?');
+  });
+
   it('CA-06: resposta simulada exibe o selo "Simulação"', () => {
     render(<InterviewAnswerCard question={question()} insight={insight(true)} formatMs={formatMs} />);
     expect(screen.getByText('Simulação')).toBeTruthy();
