@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Check, RefreshCw, XCircle, Loader2, ChevronRight, Languages } from 'lucide-react';
+import { Copy, Check, RefreshCw, XCircle, Loader2, ChevronRight, Languages, Sparkles } from 'lucide-react';
 import type { AIInsight, InterviewQuestion } from '../../types';
 import { parseCopilotMetadata, SECTION_TITLES, type CopilotTranslation } from '../../features/copilot/copilotAnswer';
 import { INTERVIEW_LANGUAGES } from '../../features/live/interviewLanguage';
@@ -60,7 +60,7 @@ export const InterviewAnswerCard: React.FC<Props> = ({
   const canTranslate = !!onTranslate && !!meta && !streaming && !!questionId && !!originalSpoken;
   const languageLabel = (tag: string) => {
     const l = INTERVIEW_LANGUAGES.find((x) => x.tag === tag);
-    return l ? `${l.flag} ${l.label}` : tag;
+    return l ? l.label : tag;
   };
 
   const translateTo = async (tag: string) => {
@@ -99,11 +99,11 @@ export const InterviewAnswerCard: React.FC<Props> = ({
   };
 
   return (
-    <div className="p-4 rounded-2xl border space-y-2 shadow-2xs bg-[#f0f6ff] border-[#0b57d0]/40" data-testid="answer-card">
+    <div className="p-4 rounded-xl border space-y-2.5 bg-white border-[#e8eaed] shadow-[0_1px_2px_rgba(60,64,67,0.08)]" data-testid="answer-card">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-semibold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-[#0b57d0] text-white">
-            🎯 Copiloto
+          <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#e8f0fe] text-[#1a73e8]">
+            <Sparkles className="w-3 h-3" /> Copiloto
           </span>
           {meta?.simulated && (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#fef7e0] text-[#5f4300]" title="Gerada sem modelo de IA">
@@ -153,7 +153,7 @@ export const InterviewAnswerCard: React.FC<Props> = ({
                     onClick={() => void translateTo(l.tag)}
                     className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#f0f4f9] cursor-pointer ${shownLanguage === l.tag ? 'font-semibold text-[#0b57d0]' : 'text-[#1f1f1f]'}`}
                   >
-                    {l.flag} {l.label}
+                    <span className="inline-block w-6 text-[10px] font-semibold text-[#80868b]">{l.short}</span>{l.label}
                   </button>
                 ))}
               </div>
@@ -183,7 +183,7 @@ export const InterviewAnswerCard: React.FC<Props> = ({
         </p>
       )}
 
-      <h3 className="text-xs font-semibold text-[#1f1f1f]">❓ {title}</h3>
+      <h3 className="text-[13px] font-semibold leading-snug text-[#202124]">{title}</h3>
 
       {streaming && !spoken && (
         <div className="bg-white border border-[#d3e3fd] rounded-xl p-3 space-y-2" aria-hidden="true" data-testid="answer-skeleton">
@@ -196,7 +196,7 @@ export const InterviewAnswerCard: React.FC<Props> = ({
       {spoken && (
         <p
           className={`${focus ? 'text-base' : 'text-[13px]'} leading-relaxed bg-white border rounded-xl p-3 whitespace-pre-line ${
-            streaming ? 'text-[#3c4043] border-dashed border-[#a8c7fa]' : 'text-[#1f1f1f] border-[#d3e3fd]'
+            streaming ? 'text-[#3c4043] border-dashed border-[#c6dafc] bg-[#fafbff]' : 'text-[#202124] border-[#e8eaed] bg-[#f8f9fa]'
           }`}
           data-testid="spoken-answer"
           aria-live="polite"
