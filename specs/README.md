@@ -10,7 +10,7 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 | [004](004-ai-interview-copilot/spec.md) | Copiloto de entrevistas | P1 | **Validada** (entrevista real em 2026-11-16) |
 | [005](005-question-detection/spec.md) | Detecção de perguntas e deduplicação | P1 | **Validada** (entrevista real em 2026-11-16) |
 | [006](006-integration-testing/spec.md) | Testes automatizados e de integração | P0 (infraestrutura) | **Validada** (118 backend + 53 frontend; entrevista real em 2026-11-16) |
-| 007 (proposta) | Segurança: WebSocket autenticado, isolamento entre organizações, chaves criptografadas | P1 | Não iniciada |
+| [007](007-security-hardening/spec.md) | Segurança: login só pelo Google, WebSocket autenticado, isolamento entre organizações, chaves criptografadas, CORS e papéis | P1 | **Implementada** (290 backend + 127 frontend; falta conferir no navegador) |
 | [008](008-fluid-experience/spec.md) | Experiência fluida: copiloto em streaming, modo entrevista, UI incremental | P1 / P2 / P3 | **Validada** (146 backend + 78 frontend; entrevista real em 2026-11-16) |
 | [009](009-any-audio-source/spec.md) | Captura de áudio de qualquer fonte (qualquer aba ou tela inteira com áudio do sistema) | P2 | **Validada** (146 backend + 84 frontend; entrevista real em 2026-11-16) |
 | [010](010-quick-capture/spec.md) | Captura avulsa: "Nova captura" sem Google Meet | P2 | **Validada** (150 backend + 90 frontend; entrevista real em 2026-11-16) |

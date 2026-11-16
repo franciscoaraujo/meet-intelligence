@@ -265,14 +265,30 @@ class TranscriptionServiceTest {
         UUID segmentId = UUID.randomUUID();
         TranscriptSegment segment = TranscriptSegment.builder()
                 .id(segmentId)
+                .meeting(meeting)
                 .originalText("Texto com erro de grafia")
                 .build();
 
         when(segmentRepository.findById(segmentId)).thenReturn(Optional.of(segment));
 
-        TranscriptSegment updated = transcriptionService.correctSegment(segmentId, "Texto corrigido com precisão");
+        TranscriptSegment updated = transcriptionService.correctSegment(meetingId, segmentId, "Texto corrigido com precisão");
 
         assertEquals("Texto com erro de grafia", updated.getOriginalText());
         assertEquals("Texto corrigido com precisão", updated.getCorrectedText());
+    }
+
+    @Test
+    @DisplayName("Spec 007 CA-08: corrigir trecho de outra reunião pela URL da própria é 404")
+    void correctSegmentOfAnotherMeetingIsNotFound() {
+        UUID segmentId = UUID.randomUUID();
+        Meeting other = Meeting.builder().id(UUID.randomUUID()).build();
+        when(segmentRepository.findById(segmentId)).thenReturn(Optional.of(
+                TranscriptSegment.builder().id(segmentId).meeting(other).originalText("x").build()));
+
+        assertThatThrownBy(() -> transcriptionService.correctSegment(meetingId, segmentId, "y"))
+                .isInstanceOf(ResourceNotFoundException.class);
+        assertThatThrownBy(() -> transcriptionService.updateSegmentSpeaker(meetingId, segmentId, "Ana", null))
+                .isInstanceOf(ResourceNotFoundException.class);
+        verify(segmentRepository, never()).save(any());
     }
 }

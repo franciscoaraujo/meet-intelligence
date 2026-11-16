@@ -8,6 +8,8 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import com.meetingintelligence.infrastructure.security.UserPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.UUID;
@@ -19,20 +21,12 @@ import java.util.UUID;
 public class DashboardController {
 
     private final BillingMetricsService billingMetricsService;
-    private final OrganizationRepository organizationRepository;
 
     @GetMapping("/metrics")
     @Operation(summary = "Obter métricas operacionais e de billing do tenant", description = "Retorna horas gravadas, transcritas, tokens de LLM e consumo de quota")
-    public ResponseEntity<DashboardMetricsDto> getMetrics(
-            @RequestParam(required = false) UUID organizationId) {
-        
-        UUID orgId = organizationId;
-        if (orgId == null) {
-            orgId = organizationRepository.findAll().stream()
-                    .map(Organization::getId)
-                    .findFirst()
-                    .orElse(UUID.randomUUID());
-        }
+    public ResponseEntity<DashboardMetricsDto> getMetrics(@AuthenticationPrincipal UserPrincipal user) {
+        // Spec 007: sempre a organização do usuário (antes vinha da URL ou era a primeira do banco)
+        UUID orgId = user.getOrganizationId();
 
         DashboardMetricsDto metrics = billingMetricsService.getMetrics(orgId);
         return ResponseEntity.ok(metrics);

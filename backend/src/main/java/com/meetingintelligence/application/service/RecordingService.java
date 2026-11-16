@@ -67,9 +67,12 @@ public class RecordingService {
         return recordingRepository.findByMeetingId(meetingId);
     }
 
-    public String getPlaybackUrl(UUID recordingId) {
+    /** Spec 007 RF-12: a gravação precisa ser da reunião da URL. */
+    public String getPlaybackUrl(UUID meetingId, UUID recordingId) {
         Recording recording = recordingRepository.findById(recordingId)
-                .orElseThrow(() -> new IllegalArgumentException("Gravação não encontrada: " + recordingId));
+                .filter(r -> r.getMeeting() != null && meetingId.equals(r.getMeeting().getId()))
+                .orElseThrow(() -> new com.meetingintelligence.application.exception.ResourceNotFoundException(
+                        "Gravação não encontrada: " + recordingId));
         return s3StorageService.generatePresignedUrl(recording.getStoragePath());
     }
 }

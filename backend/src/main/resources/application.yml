@@ -86,10 +86,18 @@ spring:
 # Custom Application Configs
 app:
   jwt:
-    secret: ${JWT_SECRET:404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+    secret: ${JWT_SECRET:}
     expiration-hours: ${JWT_EXPIRATION_HOURS:24}
-  encryption:
-    secret-key: ${ENCRYPTION_SECRET_KEY:MEET_INTELLIGENCE_AES256_KEY_32B!}
+  # Spec 007: segredos sem valor padrão (RN-01). Em desenvolvimento, ficam no backend/.env.
+  security:
+    # 32 bytes em base64 (AES-256-GCM) para as chaves de IA gravadas no banco. Obrigatória.
+    encryption-key: ${APP_ENCRYPTION_KEY:}
+    # Origens do frontend autorizadas (CORS e WebSocket), separadas por vírgula
+    allowed-origins: ${APP_ALLOWED_ORIGINS:http://localhost:5173}
+  auth:
+    # Login de demonstração (só o e-mail abaixo). Nunca ligar em produção.
+    demo-login-enabled: ${AUTH_DEMO_LOGIN_ENABLED:false}
+    demo-email: ${AUTH_DEMO_EMAIL:demo.user@meetingintelligence.ai}
   s3:
     endpoint: ${S3_ENDPOINT:http://localhost:9000}
     access-key: ${S3_ACCESS_KEY:minio_admin}

@@ -32,6 +32,10 @@ class AuthControllerTest {
     @MockBean
     private com.meetingintelligence.infrastructure.security.JwtService jwtService;
 
+    /** Spec 007: a guarda de reunião (interceptor MVC) entra no slice web. */
+    @MockBean
+    private com.meetingintelligence.infrastructure.persistence.repository.MeetingRepository meetingRepository;
+
     @Test
     @DisplayName("Deve aceitar requisição de autenticação Google com credencial válida")
     void shouldAcceptGoogleAuthRequest() throws Exception {

@@ -109,10 +109,10 @@ public class TranscriptController {
         TranscriptSegment segment = null;
         if (body.containsKey("speakerLabel")) {
             SpeakerRole role = body.get("speakerRole") != null ? SpeakerRole.valueOf(body.get("speakerRole")) : null;
-            segment = transcriptionService.updateSegmentSpeaker(segmentId, body.get("speakerLabel"), role);
+            segment = transcriptionService.updateSegmentSpeaker(meetingId, segmentId, body.get("speakerLabel"), role);
         }
         if (body.containsKey("correctedText")) {
-            segment = transcriptionService.correctSegment(segmentId, body.get("correctedText"));
+            segment = transcriptionService.correctSegment(meetingId, segmentId, body.get("correctedText"));
         }
         if (segment == null) {
             throw new IllegalArgumentException("Informe correctedText e/ou speakerLabel.");

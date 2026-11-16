@@ -2,18 +2,19 @@ package com.meetingintelligence.presentation.controller;
 
 import com.meetingintelligence.application.dto.OrganizationDto;
 import com.meetingintelligence.application.service.OrganizationService;
-import com.meetingintelligence.domain.entity.Organization;
 import com.meetingintelligence.domain.enums.OrganizationRole;
 import com.meetingintelligence.domain.enums.PlanType;
-import com.meetingintelligence.infrastructure.persistence.repository.OrganizationRepository;
+import com.meetingintelligence.infrastructure.security.UserPrincipal;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/organization")
@@ -22,43 +23,38 @@ import java.util.UUID;
 public class OrganizationController {
 
     private final OrganizationService organizationService;
-    private final OrganizationRepository organizationRepository;
 
-    private UUID resolveOrgId(UUID organizationId) {
-        if (organizationId != null) return organizationId;
-        return organizationRepository.findAll().stream()
-                .map(Organization::getId)
-                .findFirst()
-                .orElse(UUID.randomUUID());
-    }
+    /*
+     * Spec 007 (S-05): a organização é sempre a do usuário logado. Antes vinha de um parâmetro
+     * opcional da URL (ou era a primeira do banco), o que deixava qualquer usuário ler e alterar
+     * qualquer organização.
+     */
 
     @GetMapping
-    @Operation(summary = "Obter dados da organização e equipe", description = "Retorna plano atual, membros cadastrados e dados da organização")
-    public ResponseEntity<OrganizationDto> getOrganization(@RequestParam(required = false) UUID organizationId) {
-        UUID orgId = resolveOrgId(organizationId);
-        return ResponseEntity.ok(organizationService.getOrganizationDetails(orgId));
+    @Operation(summary = "Obter dados da organização e equipe", description = "Retorna plano atual, membros cadastrados e dados da organização do usuário")
+    public ResponseEntity<OrganizationDto> getOrganization(@AuthenticationPrincipal UserPrincipal user) {
+        return ResponseEntity.ok(organizationService.getOrganizationDetails(user.getOrganizationId()));
     }
 
     @PatchMapping("/plan")
-    @Operation(summary = "Atualizar plano de assinatura (Upgrade / Downgrade)", description = "Altera o plano para FREE, PRO ou BUSINESS")
-    public ResponseEntity<OrganizationDto> updatePlan(
-            @RequestParam(required = false) UUID organizationId,
-            @RequestParam PlanType planType) {
-        UUID orgId = resolveOrgId(organizationId);
-        return ResponseEntity.ok(organizationService.updatePlan(orgId, planType));
+    @PreAuthorize("hasAnyRole('OWNER','ADMIN')")
+    @Operation(summary = "Atualizar plano de assinatura (Upgrade / Downgrade)", description = "Altera o plano para FREE, PRO ou BUSINESS; exige OWNER ou ADMIN")
+    public ResponseEntity<OrganizationDto> updatePlan(@AuthenticationPrincipal UserPrincipal user,
+                                                      @RequestParam PlanType planType) {
+        return ResponseEntity.ok(organizationService.updatePlan(user.getOrganizationId(), planType));
     }
 
     @PostMapping("/members/invite")
-    @Operation(summary = "Convidar novo membro para o workspace", description = "Adiciona usuário com papel especificado (ADMIN, MEMBER, VIEWER)")
-    public ResponseEntity<OrganizationDto.MemberItemDto> inviteMember(
-            @RequestParam(required = false) UUID organizationId,
-            @RequestBody InviteMemberRequest request) {
-        UUID orgId = resolveOrgId(organizationId);
+    @PreAuthorize("hasAnyRole('OWNER','ADMIN')")
+    @Operation(summary = "Convidar novo membro para o workspace", description = "Adiciona usuário com papel especificado; exige OWNER ou ADMIN, e convidar OWNER exige OWNER")
+    public ResponseEntity<OrganizationDto.MemberItemDto> inviteMember(@AuthenticationPrincipal UserPrincipal user,
+                                                                      @RequestBody InviteMemberRequest request) {
+        OrganizationRole role = request.getRole() != null ? request.getRole() : OrganizationRole.MEMBER;
+        if (role == OrganizationRole.OWNER && !"OWNER".equals(user.getRole())) {
+            throw new AccessDeniedException("Só o dono convida outro dono.");
+        }
         OrganizationDto.MemberItemDto member = organizationService.inviteMember(
-                orgId, 
-                request.getEmail(), 
-                request.getRole() != null ? request.getRole() : OrganizationRole.MEMBER
-        );
+                user.getOrganizationId(), request.getEmail(), role);
         return ResponseEntity.ok(member);
     }
 

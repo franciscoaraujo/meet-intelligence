@@ -14,6 +14,9 @@ import java.util.UUID;
 @Repository
 public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
     Page<Meeting> findByOrganizationId(UUID organizationId, Pageable pageable);
+
+    /** Spec 007: a reunião é desta organização? (guarda das rotas e do WebSocket) */
+    boolean existsByIdAndOrganization_Id(UUID id, UUID organizationId);
     List<Meeting> findByCreatedByIdOrderByCreatedAtDesc(UUID userId);
     List<Meeting> findByStatus(MeetingStatus status);
     Optional<Meeting> findByOrganizationIdAndGoogleCalendarEventId(UUID organizationId, String googleCalendarEventId);

@@ -41,8 +41,9 @@ public class AIProfileController {
 
     @DeleteMapping("/{id}")
     @Operation(summary = "Remover perfil", description = "Exclui um perfil customizado")
-    public ResponseEntity<Void> deleteProfile(@PathVariable UUID id) {
-        profileService.deleteProfile(id);
+    public ResponseEntity<Void> deleteProfile(@PathVariable UUID id,
+                                              @AuthenticationPrincipal UserPrincipal currentUser) {
+        profileService.deleteProfile(id, currentUser.getOrganizationId());
         return ResponseEntity.noContent().build();
     }
 }

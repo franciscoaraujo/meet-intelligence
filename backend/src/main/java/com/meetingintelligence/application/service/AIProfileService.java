@@ -50,8 +50,13 @@ public class AIProfileService {
     }
 
     @Transactional
-    public void deleteProfile(UUID profileId) {
-        profileRepository.deleteById(profileId);
+    /** Spec 007 RF-13: só exclui perfil da própria organização; de outra → 404. */
+    public void deleteProfile(UUID profileId, UUID organizationId) {
+        var profile = profileRepository.findById(profileId)
+                .filter(p -> p.getOrganization() != null && p.getOrganization().getId().equals(organizationId))
+                .orElseThrow(() -> new com.meetingintelligence.application.exception.ResourceNotFoundException(
+                        "Perfil não encontrado: " + profileId));
+        profileRepository.delete(profile);
     }
 
     private List<AIProfileDto> getDefaultSystemProfiles() {

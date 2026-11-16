@@ -14,6 +14,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  * o mapeamento das entidades (ddl-auto=validate). Falha se migration e entidade divergirem.
  */
 @DataJpaTest
+// Spec 007: as colunas de segredo usam o conversor que depende da SecretCipher
+@org.springframework.context.annotation.Import(com.meetingintelligence.infrastructure.security.SecretCipher.class)
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 class MigrationsIT extends AbstractPostgresIT {
 

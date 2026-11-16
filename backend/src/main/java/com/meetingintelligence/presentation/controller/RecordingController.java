@@ -44,7 +44,7 @@ public class RecordingController {
     public ResponseEntity<Map<String, String>> getPlaybackUrl(
             @PathVariable UUID meetingId,
             @PathVariable UUID recordingId) {
-        String url = recordingService.getPlaybackUrl(recordingId);
+        String url = recordingService.getPlaybackUrl(meetingId, recordingId);
         return ResponseEntity.ok(Map.of("playbackUrl", url));
     }
 }
