@@ -22,6 +22,7 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 | [016](016-multi-part-question/spec.md) | Pergunta em várias partes: o complemento entra no mesmo card | P1 | **Validada** (224 backend + 120 frontend; entrevista real em 2026-11-16) |
 | [017](017-grok-transcription/spec.md) | Transcrição com o Grok: uma chave xAI para transcrição e respostas | P1 | **Implementada** (246 backend + 120 frontend; falta entrevista real) |
 | [018](018-deepgram-default/spec.md) | Deepgram como transcrição padrão do produto (chave do servidor, custo registrado) | P1 | **Implementada** (254 backend; falta a chave real e entrevista real) |
+| [019](019-landing-adhesion/spec.md) | Adesão ao copiloto de entrevistas nas landing pages (teste grátis + planos sob consulta) | P2 | **Implementada** (125 frontend; falta revisão visual) |
 
 ## Ordem de implementação proposta
 Cada etapa só começa com a anterior verde (testes passando e critérios de aceite atendidos).

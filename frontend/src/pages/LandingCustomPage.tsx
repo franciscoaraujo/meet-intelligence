@@ -26,6 +26,7 @@ import {
   Check,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { InterviewPlansSection } from '../components/landing/InterviewPlansSection';
 
 type VerticalKey = 'tributario' | 'recrutamento' | 'software' | 'saude';
 
@@ -185,6 +186,9 @@ export const LandingCustomPage: React.FC = () => {
           </a>
           <a href="#formatos-implantacao" className="hover:text-[#0b57d0] transition-colors">
             Modelos de Implantação
+          </a>
+          <a href="#planos-entrevista" className="hover:text-[#0b57d0] transition-colors font-semibold text-[#0b57d0]">
+            Planos
           </a>
         </nav>
 
@@ -665,6 +669,9 @@ export const LandingCustomPage: React.FC = () => {
           </div>
         </div>
       </section>
+
+      {/* SPEC 019: ADESÃO AO COPILOTO DE ENTREVISTAS */}
+      <InterviewPlansSection isAuthenticated={isAuthenticated} />
 
       {/* FOOTER */}
       <footer className="py-8 px-6 lg:px-12 bg-[#f8fafd] border-t border-[#e0e3e7] text-center text-xs text-[#444746]">
