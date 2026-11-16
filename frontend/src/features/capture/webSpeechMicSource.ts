@@ -28,6 +28,8 @@ export interface WebSpeechOptions {
   now?: () => number;
   /** Pausa que consolida a frase (comportamento atual: 2,2 s). */
   flushDelayMs?: number;
+  /** Idioma do reconhecimento (spec 011); padrão pt-BR. */
+  language?: string;
   /** Reinícios automáticos permitidos numa janela, para não entrar em laço infinito. */
   maxRestarts?: number;
   restartWindowMs?: number;
@@ -62,6 +64,7 @@ export class WebSpeechMicSource {
       clearTimer: (id) => window.clearTimeout(id),
       now: () => Date.now(),
       flushDelayMs: 2200,
+      language: 'pt-BR',
       maxRestarts: 5,
       restartWindowMs: 10000,
       ...options,
@@ -77,7 +80,7 @@ export class WebSpeechMicSource {
     this.active = true;
     this.restarts = [];
     this.recognition = recognition;
-    recognition.lang = 'pt-BR';
+    recognition.lang = this.o.language;
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.maxAlternatives = 1;

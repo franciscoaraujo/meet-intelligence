@@ -70,7 +70,7 @@ class SpeakerAttributionServiceTest {
         SpeakerAttribution result = service.forLiveAudio(meeting, AudioSource.TAB, userId);
 
         assertThat(result.role()).isEqualTo(SpeakerRole.REMOTE);
-        assertThat(result.label()).isEqualTo("Participante remoto (Meet)").doesNotContain("Francisco");
+        assertThat(result.label()).isEqualTo("Participante remoto").doesNotContain("Francisco");
         assertThat(result.participant()).isNull();
         verify(participants, never()).save(any());
     }

@@ -6,6 +6,7 @@ import com.meetingintelligence.application.service.question.SegmentEvent;
 import com.meetingintelligence.domain.entity.InterviewQuestion;
 import com.meetingintelligence.domain.entity.TranscriptSegment;
 import com.meetingintelligence.domain.enums.InterviewRole;
+import com.meetingintelligence.domain.question.UtteranceType;
 import com.meetingintelligence.domain.speech.AudioSource;
 import com.meetingintelligence.domain.speech.SpeakerRole;
 import com.meetingintelligence.infrastructure.async.MeetingSerialExecutor;
@@ -183,7 +184,76 @@ class QuestionDetectionServiceTest {
 
         assertThat(stored).hasSize(1);
         assertThat(stored.get(0).isAutoAnswer()).isTrue();
+        assertThat(stored.get(0).getUtteranceType()).isEqualTo(UtteranceType.MANUAL_TRIGGER);
         verify(copilot).answer(stored.get(0).getId());
+    }
+
+    private TranscriptSegment remoteSegment(String text, long createdAtMs) {
+        return TranscriptSegment.builder().id(UUID.randomUUID()).originalText(text).speakerRole(SpeakerRole.REMOTE)
+                .createdAt(OffsetDateTime.ofInstant(Instant.ofEpochMilli(createdAtMs), ZoneOffset.UTC)).build();
+    }
+
+    private InterviewQuestion existingQuestion(String text, InterviewQuestion.Status status, long createdAtMs) {
+        InterviewQuestion q = InterviewQuestion.builder().id(UUID.randomUUID()).meetingId(meetingId).status(status)
+                .questionText(text).utteranceType(UtteranceType.DIRECT_QUESTION).score(java.math.BigDecimal.ONE)
+                .sourceSegmentIds(new UUID[0]).build();
+        q.setCreatedAt(OffsetDateTime.ofInstant(Instant.ofEpochMilli(createdAtMs), ZoneOffset.UTC));
+        stored.add(q);
+        return q;
+    }
+
+    @Test
+    @DisplayName("Pergunta terminou: usa toda a fala remota desde a última pergunta (comentário + pergunta nova)")
+    void manualTriggerUsesSpeechSinceLastQuestion() {
+        existingQuestion("qual é a fórmula geral da equação do segundo grau", InterviewQuestion.Status.ANSWERED, 1_000_000);
+        // Cliques anteriores descartados não contam como limite
+        existingQuestion("isso mesmo não pode ser zero", InterviewQuestion.Status.DISMISSED, 1_012_000);
+        TranscriptSegment before = remoteSegment("qual é a fórmula geral da equação do segundo grau", 990_000);
+        TranscriptSegment comment = remoteSegment("isso mesmo não pode ser zero senão vira equação de primeiro grau", 1_010_000);
+        TranscriptSegment newQuestion = remoteSegment("no experimento de dupla fenda por que o padrão de interferência desaparece", 1_020_000);
+        TranscriptSegment mine = TranscriptSegment.builder().id(UUID.randomUUID()).originalText("hum deixa eu pensar")
+                .speakerRole(SpeakerRole.SELF).createdAt(OffsetDateTime.ofInstant(Instant.ofEpochMilli(1_021_000), ZoneOffset.UTC)).build();
+        when(segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId)).thenReturn(List.of(before, comment, newQuestion, mine));
+        now.set(1_030_000);
+
+        service.triggerManual(meetingId);
+
+        InterviewQuestion manual = stored.get(stored.size() - 1);
+        assertThat(manual.getUtteranceType()).isEqualTo(UtteranceType.MANUAL_TRIGGER);
+        assertThat(manual.getQuestionText())
+                .isEqualTo("isso mesmo não pode ser zero senão vira equação de primeiro grau no experimento de dupla fenda por que o padrão de interferência desaparece");
+        assertThat(manual.getSourceSegmentIds()).containsExactly(comment.getId(), newQuestion.getId());
+        verify(copilot).answer(manual.getId());
+    }
+
+    @Test
+    @DisplayName("Pergunta terminou sem pergunta anterior: só a fala dos últimos 120 s")
+    void manualTriggerWindow() {
+        TranscriptSegment old = remoteSegment("bom dia tudo bem", 1_000_000);
+        TranscriptSegment recent = remoteSegment("me conta como você desenharia o módulo de guias", 1_200_000);
+        when(segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId)).thenReturn(List.of(old, recent));
+        now.set(1_250_000);
+
+        service.triggerManual(meetingId);
+
+        assertThat(stored).singleElement().extracting(InterviewQuestion::getQuestionText)
+                .isEqualTo("me conta como você desenharia o módulo de guias");
+    }
+
+    @Test
+    @DisplayName("Pergunta terminou duas vezes seguidas sobre a mesma fala: uma pergunta só, sem resposta em dobro")
+    void manualTriggerTwiceDoesNotDuplicate() {
+        TranscriptSegment q = remoteSegment("como você usaria agentes de IA no dia a dia", 1_000_500);
+        when(segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId)).thenReturn(List.of(q));
+        now.set(1_001_000);
+        service.triggerManual(meetingId);
+        stored.get(0).setStatus(InterviewQuestion.Status.ANSWERING);
+        // a pergunta criada vira o novo limite; sem fala nova, o segundo clique cai nas últimas falas e deduplica
+        now.addAndGet(500);
+        service.triggerManual(meetingId);
+
+        assertThat(stored).hasSize(1);
+        verify(copilot, times(1)).answer(any());
     }
 
     @Test

@@ -82,7 +82,7 @@ class TranscriptionServiceTest {
                 new com.meetingintelligence.application.service.SpeakerAttributionService.SpeakerAttribution(
                         inv.getArgument(1) == AudioSource.MIC ? com.meetingintelligence.domain.speech.SpeakerRole.SELF
                                 : com.meetingintelligence.domain.speech.SpeakerRole.REMOTE,
-                        inv.getArgument(1) == AudioSource.MIC ? "Francisco" : "Participante remoto (Meet)",
+                        inv.getArgument(1) == AudioSource.MIC ? "Francisco" : "Participante remoto",
                         java.math.BigDecimal.valueOf(0.8), null));
         when(segmentRepository.save(any(TranscriptSegment.class))).thenAnswer(inv -> {
             TranscriptSegment s = inv.getArgument(0);
@@ -131,7 +131,7 @@ class TranscriptionServiceTest {
         assertThat(seg.getSource()).isEqualTo("DEEPGRAM");
         assertThat(seg.getAudioSource()).isEqualTo(AudioSource.TAB);
         assertThat(seg.getSpeakerRole()).isEqualTo(com.meetingintelligence.domain.speech.SpeakerRole.REMOTE);
-        assertThat(seg.getSpeakerLabel()).isEqualTo("Participante remoto (Meet)");
+        assertThat(seg.getSpeakerLabel()).isEqualTo("Participante remoto");
         assertThat(seg.getStartTimeMs()).isEqualTo(125_000L);
         assertThat(seg.getCaptureEndMs()).isEqualTo(131_400L);
         assertThat(ingestions.get(0).getStatus()).isEqualTo(TranscriptIngestion.Status.TRANSCRIBED);

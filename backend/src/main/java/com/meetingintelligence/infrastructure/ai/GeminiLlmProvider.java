@@ -31,15 +31,27 @@ public class GeminiLlmProvider implements LLMProvider {
     private final String model;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final SseClient sse;
+    private final String streamBaseUrl;
 
+    private static final String BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+
+    @org.springframework.beans.factory.annotation.Autowired
     public GeminiLlmProvider(
             @Value("${app.ai.gemini.api-key:mock-key}") String apiKey,
             @Value("${app.ai.gemini.model:" + AiModels.GEMINI_DEFAULT + "}") String model,
             ObjectMapper objectMapper) {
+        this(apiKey, model, objectMapper, new SseClient(java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(20)), BASE_URL);
+    }
+
+    /** Construtor de teste: permite apontar o streaming para um servidor local. */
+    GeminiLlmProvider(String apiKey, String model, ObjectMapper objectMapper, SseClient sse, String streamBaseUrl) {
         this.apiKey = apiKey;
         this.model = model;
         this.restTemplate = new RestTemplate();
         this.objectMapper = objectMapper;
+        this.sse = sse;
+        this.streamBaseUrl = streamBaseUrl;
     }
 
     @Override
@@ -84,34 +96,7 @@ public class GeminiLlmProvider implements LLMProvider {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
 
-            // Monta payload do Gemini API
-            Map<String, Object> body = new HashMap<>();
-
-            // System instructions
-            if (request.getSystemPrompt() != null) {
-                body.put("systemInstruction", Map.of(
-                        "parts", List.of(Map.of("text", request.getSystemPrompt()))
-                ));
-            }
-
-            // User content
-            body.put("contents", List.of(
-                    Map.of(
-                            "role", "user",
-                            "parts", List.of(Map.of("text", request.getUserPrompt()))
-                    )
-            ));
-
-            // Generation config. Nos modelos Gemini 3.x/4 o Google recomenda não enviar temperature/top_p
-            // (os padrões do modelo são calibrados com o raciocínio interno).
-            Map<String, Object> genConfig = new HashMap<>();
-            if (request.getMaxTokens() != null) {
-                genConfig.put("maxOutputTokens", request.getMaxTokens());
-            }
-            if (request.isJsonMode()) {
-                genConfig.put("responseMimeType", "application/json");
-            }
-            body.put("generationConfig", genConfig);
+            Map<String, Object> body = buildBody(request);
 
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
@@ -154,6 +139,125 @@ public class GeminiLlmProvider implements LLMProvider {
             log.error("Falha ao chamar a Gemini API: {}", e.getMessage(), e);
             throw new IllegalStateException("Falha ao chamar a Gemini API: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Streaming por {@code :streamGenerateContent?alt=sse} (spec 008). A chave vai no cabeçalho
+     * {@code x-goog-api-key}, não na URL. Sem chave, a simulação local é entregue em partes (RN-03).
+     */
+    @Override
+    public LLMResponse stream(LLMRequest request, String overrideApiKey, String overrideModel,
+                              com.meetingintelligence.domain.ai.LlmStreamListener listener) {
+        long startTime = System.currentTimeMillis();
+        String effectiveKey = (overrideApiKey != null && !overrideApiKey.isBlank()) ? overrideApiKey : this.apiKey;
+        String effectiveModel = (overrideModel != null && !overrideModel.isBlank()) ? overrideModel : this.model;
+
+        if (effectiveKey == null || effectiveKey.isBlank() || effectiveKey.equals("mock-key")) {
+            LLMResponse simulated = generateMockResponse(request, startTime);
+            String content = simulated.getContent();
+            for (int i = 0; i < content.length(); i += SIMULATION_CHUNK) {
+                listener.onDelta(content.substring(i, Math.min(content.length(), i + SIMULATION_CHUNK)));
+            }
+            return simulated;
+        }
+
+        StreamAccumulator acc = new StreamAccumulator(objectMapper, listener);
+        try {
+            sse.post(streamBaseUrl + effectiveModel + ":streamGenerateContent?alt=sse",
+                    Map.of("x-goog-api-key", effectiveKey), objectMapper.writeValueAsString(buildBody(request)), acc::accept);
+        } catch (SseClient.HttpStatusException e) {
+            log.error("Erro no streaming da Gemini API ({}): {}", e.status(), e.body());
+            throw new IllegalStateException("Gemini API retornou HTTP " + e.status() + ": "
+                    + (e.body() == null || e.body().isBlank() ? "sem detalhes" : e.body()), e);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Falha ao montar a requisição da Gemini API", e);
+        }
+        if (acc.finishReason == null) {
+            throw new IllegalStateException("Streaming da Gemini API terminou sem finishReason");
+        }
+        String content = acc.text.toString().trim();
+        if (content.isBlank()) {
+            throw new IllegalStateException("Gemini não retornou texto (finishReason=" + acc.finishReason + ").");
+        }
+        return LLMResponse.builder()
+                .providerName(getProviderName())
+                .modelName(effectiveModel)
+                .content(content)
+                .promptTokens(acc.promptTokens)
+                .completionTokens(acc.completionTokens)
+                .totalTokens(acc.promptTokens + acc.completionTokens)
+                .estimatedCostUsd(AiModels.estimateCost(effectiveModel, acc.promptTokens, acc.completionTokens))
+                .latencyMs(System.currentTimeMillis() - startTime)
+                .build();
+    }
+
+    static final int SIMULATION_CHUNK = 24;
+
+    /** Processa, na ordem, os pedaços (GenerateContentResponse) do streaming do Gemini. */
+    static final class StreamAccumulator {
+        private final ObjectMapper objectMapper;
+        private final com.meetingintelligence.domain.ai.LlmStreamListener listener;
+        final StringBuilder text = new StringBuilder();
+        String finishReason;
+        int promptTokens;
+        int completionTokens;
+
+        StreamAccumulator(ObjectMapper objectMapper, com.meetingintelligence.domain.ai.LlmStreamListener listener) {
+            this.objectMapper = objectMapper;
+            this.listener = listener;
+        }
+
+        void accept(SseClient.Event event) {
+            if (event.data() == null || event.data().isBlank()) return;
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(event.data());
+            } catch (Exception e) {
+                log.debug("Evento SSE da Gemini API ignorado (JSON inválido)");
+                return;
+            }
+            if (root.has("error")) {
+                throw new IllegalStateException("Gemini API falhou no streaming: " + root.path("error").path("message").asText("sem detalhes"));
+            }
+            JsonNode candidate = root.path("candidates").path(0);
+            for (JsonNode part : candidate.path("content").path("parts")) {
+                if (!part.path("thought").asBoolean(false) && part.has("text")) {
+                    String piece = part.path("text").asText("");
+                    if (!piece.isEmpty()) {
+                        text.append(piece);
+                        listener.onDelta(piece);
+                    }
+                }
+            }
+            if (candidate.hasNonNull("finishReason") && !candidate.path("finishReason").asText().isBlank()) {
+                finishReason = candidate.path("finishReason").asText();
+            }
+            JsonNode usage = root.path("usageMetadata");
+            if (!usage.isMissingNode()) {
+                promptTokens = usage.path("promptTokenCount").asInt(promptTokens);
+                // A saída cobrada inclui os tokens de raciocínio (thoughtsTokenCount)
+                completionTokens = usage.path("candidatesTokenCount").asInt(0) + usage.path("thoughtsTokenCount").asInt(0);
+            }
+        }
+    }
+
+    private static Map<String, Object> buildBody(LLMRequest request) {
+        Map<String, Object> body = new HashMap<>();
+        if (request.getSystemPrompt() != null) {
+            body.put("systemInstruction", Map.of("parts", List.of(Map.of("text", request.getSystemPrompt()))));
+        }
+        body.put("contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", request.getUserPrompt())))));
+        // Nos modelos Gemini 3.x/4 o Google recomenda não enviar temperature/top_p
+        // (os padrões do modelo são calibrados com o raciocínio interno).
+        Map<String, Object> genConfig = new HashMap<>();
+        if (request.getMaxTokens() != null) {
+            genConfig.put("maxOutputTokens", request.getMaxTokens());
+        }
+        if (request.isJsonMode()) {
+            genConfig.put("responseMimeType", "application/json");
+        }
+        body.put("generationConfig", genConfig);
+        return body;
     }
 
     /**
@@ -756,8 +860,8 @@ public class GeminiLlmProvider implements LLMProvider {
         return sb.toString().trim();
     }
 
-    /** Primeira linha do prompt do copiloto (prompts/interview-answer.v1.md). */
-    static final String COPILOT_PROMPT_MARKER = "INTERVIEW_COPILOT_V1";
+    /** Prefixo da primeira linha do prompt do copiloto (prompts/interview-answer.v1.md e v2.md). */
+    static final String COPILOT_PROMPT_MARKER = "INTERVIEW_COPILOT_V";
 
     /**
      * Resposta simulada do copiloto (sem chave de IA): monta o contrato JSON a partir das respostas
@@ -786,10 +890,11 @@ public class GeminiLlmProvider implements LLMProvider {
                 : "Exemplo: aplicar o conceito num serviço Spring Boot e validar o comportamento com testes automatizados.");
         sections.put("trade_offs", "Avalie custo de complexidade, desempenho e manutenção antes de adotar a solução.");
 
-        Map<String, Object> root = new HashMap<>();
+        // Ordem dos campos igual à do prompt v2: spoken_answer logo no início, para sair primeiro no streaming
+        Map<String, Object> root = new java.util.LinkedHashMap<>();
         root.put("is_question_for_candidate", true);
-        root.put("depth", "INTERMEDIATE");
         root.put("spoken_answer", spoken);
+        root.put("depth", "INTERMEDIATE");
         root.put("sections", sections);
         root.put("resume_facts_used", resumeText != null ? List.of(limitWords(resumeText, 40)) : List.of());
         root.put("assumptions", List.of("Resposta gerada pela simulação local, sem modelo de IA. Configure uma API Key para respostas redigidas."));

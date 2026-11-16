@@ -15,7 +15,7 @@ export interface SegmentSpeakerView {
 }
 
 const ORIGIN_TITLE: Record<SegmentSpeakerView['origin'], string> = {
-  TAB: 'Áudio da aba do Meet',
+  TAB: 'Áudio do computador (aba ou tela inteira)',
   MIC: 'Seu microfone',
   UPLOAD: 'Gravação enviada',
   MANUAL: 'Texto digitado',

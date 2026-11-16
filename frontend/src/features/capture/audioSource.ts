@@ -1,5 +1,5 @@
 import type { SessionClock } from './sessionClock';
-import type { SourceKind, SourceState } from './types';
+import type { CaptureSurface, SourceKind, SourceState } from './types';
 
 /**
  * Código do AudioWorkletProcessor: repassa frames mono à thread principal (spec 001, RNF-01).
@@ -29,7 +29,30 @@ export interface AudioSourceDeps {
 export interface AudioSourceCallbacks {
   onFrame: (frame: Float32Array, frameStartMs: number) => void;
   onState: (state: SourceState, detail?: string) => void;
+  /** Superfície escolhida no seletor (só para a fonte do computador) — spec 009, RF-03. */
+  onSurface?: (surface: CaptureSurface) => void;
 }
+
+/** Lê a superfície (aba, tela inteira, janela) informada pelo navegador na trilha de vídeo. */
+export const surfaceOf = (stream: MediaStream): CaptureSurface => {
+  const video = stream.getVideoTracks?.()[0];
+  const surface = (video?.getSettings?.() as { displaySurface?: string } | undefined)?.displaySurface;
+  return surface === 'browser' || surface === 'monitor' || surface === 'window' ? surface : 'unknown';
+};
+
+/** Orientação de "Sem áudio" conforme a superfície escolhida (spec 009, RF-04). */
+export const noAudioHint = (surface: CaptureSurface): string => {
+  switch (surface) {
+    case 'window':
+      return 'Janelas não compartilham áudio. Escolha uma aba (marcando "Compartilhar áudio da guia") ou a Tela inteira (marcando "Compartilhar áudio do sistema").';
+    case 'monitor':
+      return 'Marque "Compartilhar áudio do sistema" ao escolher a Tela inteira (Windows/ChromeOS). No macOS e no Linux, escolha uma aba.';
+    case 'browser':
+      return 'Marque "Compartilhar áudio da guia" ao escolher a aba (Meet, WhatsApp Web, YouTube…).';
+    default:
+      return 'Escolha uma aba marcando "Compartilhar áudio da guia" ou a Tela inteira marcando "Compartilhar áudio do sistema".';
+  }
+};
 
 export const SAMPLE_RATE = 16000;
 const MIC_RECOVERY_DELAYS_MS = [1000, 3000, 5000];
@@ -54,7 +77,7 @@ export const stateForMediaError = (kind: SourceKind, err: unknown): { state: Sou
 };
 
 /**
- * Uma fonte de áudio (aba do Meet ou microfone): aquisição, grafo de áudio a 16 kHz, frames com
+ * Uma fonte de áudio (áudio do computador — aba ou tela inteira — ou microfone): aquisição, grafo de áudio a 16 kHz, frames com
  * horário da sessão, detecção de encerramento e recuperação controlada (spec 001, RF-01..RF-06).
  */
 export class AudioCaptureSource {
@@ -93,10 +116,13 @@ export class AudioCaptureSource {
       return;
     }
 
+    const surface = this.kind === 'TAB' ? surfaceOf(stream) : 'unknown';
+    if (this.kind === 'TAB') this.callbacks.onSurface?.(surface);
+
     const audioTracks = stream.getAudioTracks();
     if (audioTracks.length === 0) {
       stream.getTracks().forEach((t) => t.stop());
-      this.setState('SEM_AUDIO', 'Marque "Compartilhar áudio da guia" ao escolher a aba do Google Meet.');
+      this.setState('SEM_AUDIO', noAudioHint(surface));
       return;
     }
 
@@ -134,9 +160,15 @@ export class AudioCaptureSource {
 
   private acquire(): Promise<MediaStream> {
     if (this.kind === 'TAB') {
+      // Spec 009 (RF-02): qualquer aba ou a tela inteira com o áudio do sistema; a aba do próprio app
+      // fica fora do seletor (evita eco e a transcrição das respostas do copiloto). Navegadores que não
+      // conhecem essas opções as ignoram.
       return this.deps.mediaDevices.getDisplayMedia({
         video: true,
         audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true },
+        systemAudio: 'include',
+        selfBrowserSurface: 'exclude',
+        surfaceSwitching: 'include',
       } as DisplayMediaStreamOptions);
     }
     // Com a aba capturada à parte, o cancelamento de eco evita que o microfone duplique a fala remota
@@ -184,7 +216,7 @@ export class AudioCaptureSource {
     if (this.stopping || !this.stream) return;
     this.teardown();
     if (this.kind === 'TAB') {
-      // Reabrir exige gesto do usuário (getDisplayMedia): a UI oferece "Compartilhar aba novamente"
+      // Reabrir exige gesto do usuário (getDisplayMedia): a UI oferece "Compartilhar de novo"
       this.setState('INTERROMPIDA', 'O compartilhamento da aba foi encerrado.');
       return;
     }

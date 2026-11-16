@@ -24,7 +24,14 @@ public final class CopilotAnswerValidator {
     private static final Pattern FIRST_PERSON_EXPERIENCE = Pattern.compile(
             "\\b(trabalhei|usei|utilizei|implementei|desenvolvi|construi|liderei|atuei|migrei|criei|projetei"
                     + "|mantive|apliquei|configurei|integrei|arquitetei|participei|fui responsavel|tive experiencia"
-                    + "|na minha experiencia|no meu ultimo|no projeto que|na empresa)\\b");
+                    + "|na minha experiencia|no meu ultimo|no projeto que|na empresa"
+                    // Spec 011: inglês e francês (o copiloto responde no idioma da entrevista)
+                    + "|i (have )?(worked|used|implemented|built|developed|led|designed|migrated|created|maintained|applied"
+                    + "|configured|integrated|architected|deployed|shipped)|i was responsible|i ve (worked|used|built|led)"
+                    + "|in my experience|in my (last|previous|current) (job|role|company|project)|at my (last|previous|current)"
+                    + "|j.?ai (travaille|utilise|implemente|developpe|construit|dirige|concu|migre|cree|maintenu|applique"
+                    + "|configure|integre|deploye|mis en place|participe)|j.?etais responsable|dans mon experience"
+                    + "|dans mon (dernier|precedent|ancien) (poste|projet|emploi))\\b");
 
     /** Termos técnicos que, citados como experiência, precisam estar no currículo. */
     private static final Set<String> CLAIMABLE_TERMS = Set.of(
@@ -35,7 +42,10 @@ public final class CopilotAnswerValidator {
 
     private static final Pattern TECHNICAL_QUESTION = Pattern.compile(
             "\\b(java|spring|arquitetura|microsservic\\w*|mensageria|kafka|rabbit\\w*|sql|banco|distribuid\\w*"
-                    + "|concorrencia|thread\\w*|transac\\w*|consistencia|solid|padrao|padroes|design|api|cache|escal\\w*)\\b");
+                    + "|concorrencia|thread\\w*|transac\\w*|consistencia|solid|padrao|padroes|design|api|cache|escal\\w*"
+                    // Spec 011: inglês e francês
+                    + "|architecture|microservice\\w*|messaging|database|distributed|distribue\\w*|concurrency|concurrence"
+                    + "|consistency|coherence|pattern\\w*|scalab\\w*|evolutivite|base de donnees)\\b");
 
     private CopilotAnswerValidator() {}
 

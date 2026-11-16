@@ -1,4 +1,6 @@
 import React, { useEffect, useState } from 'react';
+import { QuickCaptureButton } from '../components/meetings/QuickCaptureButton';
+import { isQuickCapture } from '../features/meetings/quickCapture';
 import { useNavigate } from 'react-router-dom';
 import {
   Video,
@@ -182,6 +184,7 @@ export const DashboardPage: React.FC = () => {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <QuickCaptureButton variant="primary" />
           <button
             onClick={() =>
               calendarConnected ? loadDashboardData() : handleAuthorizeGoogleCalendarPopup()
@@ -464,7 +467,7 @@ export const DashboardPage: React.FC = () => {
                       <p className="text-sm font-medium text-[#1f1f1f] truncate">{m.title}</p>
                       <p className="text-xs text-[#444746] mt-0.5">
                         {new Date(m.scheduledStart || m.createdAt).toLocaleDateString()} •{' '}
-                        {m.googleMeetLink || m.captureMechanism}
+                        {isQuickCapture(m) ? 'Captura avulsa' : m.googleMeetLink}
                       </p>
                     </div>
                     <div className="flex items-center gap-3">

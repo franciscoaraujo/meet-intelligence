@@ -27,9 +27,14 @@ public class GeminiAudioSttProvider implements AudioTranscriber {
 
     public static final String NAME = "GEMINI";
     static final String NO_SPEECH_MARKER = "VAZIO";
-    private static final String PROMPT = "Transcreva fielmente em português do Brasil apenas o que foi falado neste "
-            + "trecho de áudio de reunião. Não adicione comentários nem explicações. Se houver apenas silêncio ou "
-            + "ruído sem fala inteligível, responda exatamente " + NO_SPEECH_MARKER + ".";
+    /** Prompt de transcrição no idioma da reunião (spec 011, RF-04). */
+    static String prompt(String languageTag) {
+        var language = com.meetingintelligence.domain.language.InterviewLanguage.fromTag(languageTag);
+        return "Transcreva fielmente em " + language.namePt() + " (" + language.tag() + ") apenas o que foi falado neste "
+                + "trecho de áudio de reunião, no idioma em que foi falado. Não traduza, não adicione comentários nem "
+                + "explicações. Se houver apenas silêncio ou ruído sem fala inteligível, responda exatamente "
+                + NO_SPEECH_MARKER + ".";
+    }
 
     private final SttHttpClients http;
     private final ObjectMapper objectMapper;
@@ -55,7 +60,7 @@ public class GeminiAudioSttProvider implements AudioTranscriber {
             Map<String, Object> body = Map.of("contents", List.of(Map.of("parts", List.of(
                     Map.of("inline_data", Map.of("mime_type", mime,
                             "data", Base64.getEncoder().encodeToString(request.audio()))),
-                    Map.of("text", PROMPT)))));
+                    Map.of("text", prompt(request.languageOrDefault()))))));
 
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);

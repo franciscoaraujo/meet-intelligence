@@ -9,9 +9,14 @@ import type { SessionClock } from '../../features/capture/sessionClock';
 export class FakeTrack extends EventTarget {
   readyState: 'live' | 'ended' = 'live';
   readonly kind: 'audio' | 'video';
-  constructor(kind: 'audio' | 'video') {
+  private readonly settings: MediaTrackSettings;
+  constructor(kind: 'audio' | 'video', settings: Record<string, unknown> = {}) {
     super();
     this.kind = kind;
+    this.settings = settings as MediaTrackSettings;
+  }
+  getSettings() {
+    return this.settings;
   }
   stop() {
     this.readyState = 'ended';
@@ -85,8 +90,12 @@ const domError = (name: string) => Object.assign(new Error(name), { name });
 /**
  * @param mic  'ok' | nome do erro (ex.: 'NotAllowedError')
  * @param tab  'ok' | 'sem-audio' | nome do erro
+ * @param surface superfície informada na trilha de vídeo da fonte do computador (spec 009)
  */
-export const createFakeMediaEnv = (opts: { mic?: string; tab?: string } = {}, clock?: SessionClock): FakeMediaEnv => {
+export const createFakeMediaEnv = (
+  opts: { mic?: string; tab?: string; surface?: 'browser' | 'monitor' | 'window' } = {},
+  clock?: SessionClock,
+): FakeMediaEnv => {
   const contexts: FakeAudioContext[] = [];
   const streams: FakeStream[] = [];
   const timers: Array<{ fn: () => void; ms: number }> = [];
@@ -100,7 +109,8 @@ export const createFakeMediaEnv = (opts: { mic?: string; tab?: string } = {}, cl
   });
   const getDisplayMedia = vi.fn(async () => {
     if (env.tab !== 'ok' && env.tab !== 'sem-audio') throw domError(env.tab);
-    const tracks = env.tab === 'sem-audio' ? [new FakeTrack('video')] : [new FakeTrack('video'), new FakeTrack('audio')];
+    const video = new FakeTrack('video', opts.surface ? { displaySurface: opts.surface } : {});
+    const tracks = env.tab === 'sem-audio' ? [video] : [video, new FakeTrack('audio')];
     const s = new FakeStream(tracks);
     streams.push(s);
     return s as unknown as MediaStream;

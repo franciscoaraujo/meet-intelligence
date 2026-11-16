@@ -83,6 +83,7 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
     private final List<String> transcriptsTopic = new CopyOnWriteArrayList<>();
     private final List<String> questionsTopic = new CopyOnWriteArrayList<>();
     private final List<String> insightsTopic = new CopyOnWriteArrayList<>();
+    private final List<String> copilotTopic = new CopyOnWriteArrayList<>();
     private final AtomicInteger primaryCalls = new AtomicInteger();
     private volatile String nextTranscript;
     private StompSession stomp;
@@ -116,8 +117,15 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
         };
         var creds = new AudioTranscriber.SttCredentials("k", null);
         when(chainFactory.build(any(), any())).thenReturn(List.of(new ChainStep(primary, creds), new ChainStep(fallback, creds)));
-        when(orchestrator.execute(any(LLMRequest.class), any(), eq("INTERVIEW_ANSWER"))).thenReturn(
-                LLMResponse.builder().providerName("CLAUDE").modelName("claude-opus-5-5").content(COPILOT_JSON).build());
+        // Copiloto falso em streaming (spec 008): entrega o JSON em pedaços de 16 caracteres
+        when(orchestrator.executeStreaming(any(LLMRequest.class), any(), eq("INTERVIEW_ANSWER"), any())).thenAnswer(inv -> {
+            com.meetingintelligence.domain.ai.LlmStreamListener listener = inv.getArgument(3);
+            for (int i = 0; i < COPILOT_JSON.length(); i += 16) {
+                listener.onDelta(COPILOT_JSON.substring(i, Math.min(COPILOT_JSON.length(), i + 16)));
+            }
+            return
+                LLMResponse.builder().providerName("CLAUDE").modelName("claude-opus-5-5").content(COPILOT_JSON).build();
+        });
 
         WebSocketStompClient client = new WebSocketStompClient(new SockJsClient(
                 List.of(new WebSocketTransport(new StandardWebSocketClient()))));
@@ -133,6 +141,7 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
         subscribe("transcripts", transcriptsTopic);
         subscribe("questions", questionsTopic);
         subscribe("insights", insightsTopic);
+        subscribe("copilot", copilotTopic);
         Thread.sleep(300); // garante as inscrições antes das mensagens
     }
 
@@ -180,8 +189,13 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
             assertThat(transcriptsTopic).anyMatch(m -> m.contains("explique o conceito de sólido") && m.contains("\"speakerRole\":\"REMOTE\""));
             assertThat(questionsTopic).anyMatch(m -> m.contains("\"status\":\"ANSWERED\""));
             assertThat(insightsTopic).anyMatch(m -> m.contains("\"category\":\"QUESTION\"") && m.contains("cinco princípios"));
+            // Spec 008 CA-01: STARTED, trechos da spoken_answer (sem JSON) e COMPLETED pelo WebSocket
+            assertThat(copilotTopic).anyMatch(m -> m.contains("\"type\":\"STARTED\""));
+            assertThat(copilotTopic).anyMatch(m -> m.contains("\"type\":\"COMPLETED\"") && m.contains("insightId"));
+            assertThat(copilotTopic).filteredOn(m -> m.contains("\"type\":\"DELTA\"")).isNotEmpty()
+                    .noneMatch(m -> m.contains("spoken_answer") || m.contains("is_question_for_candidate"));
         });
-        verify(orchestrator, times(1)).execute(any(), any(), eq("INTERVIEW_ANSWER"));
+        verify(orchestrator, times(1)).executeStreaming(any(), any(), eq("INTERVIEW_ANSWER"), any());
         assertThat(jdbc.queryForObject("select count(*) from interview_questions where meeting_id = ?", Integer.class, meetingId))
                 .isEqualTo(1);
     }
@@ -200,7 +214,7 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
             assertThat(jdbc.queryForObject("select count(*) from transcript_segments where meeting_id = ?", Integer.class, meetingId)).isEqualTo(1);
             assertThat(jdbc.queryForObject("select count(*) from interview_questions where meeting_id = ?", Integer.class, meetingId)).isEqualTo(1);
         });
-        verify(orchestrator, times(1)).execute(any(), any(), eq("INTERVIEW_ANSWER"));
+        verify(orchestrator, times(1)).executeStreaming(any(), any(), eq("INTERVIEW_ANSWER"), any());
     }
 
     @Test
@@ -212,6 +226,6 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
                 assertThat(transcriptsTopic).anyMatch(m -> m.contains("\"speakerRole\":\"SELF\"")));
         await().during(Duration.ofSeconds(2)).atMost(Duration.ofSeconds(4)).untilAsserted(() ->
                 assertThat(jdbc.queryForObject("select count(*) from interview_questions where meeting_id = ?", Integer.class, meetingId)).isZero());
-        verify(orchestrator, never()).execute(any(), any(), eq("INTERVIEW_ANSWER"));
+        verify(orchestrator, never()).executeStreaming(any(), any(), eq("INTERVIEW_ANSWER"), any());
     }
 }

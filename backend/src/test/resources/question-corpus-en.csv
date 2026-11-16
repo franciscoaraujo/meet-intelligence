@@ -1,0 +1,32 @@
+# Corpus em inglês (spec 011) — formato: texto|papel(SELF/REMOTE)|esperado(QUESTION|NOT_QUESTION)
+# Sem "?" na maioria, como sai da transcrição
+what is the difference between Kafka and RabbitMQ|REMOTE|QUESTION
+how would you design a rate limiter for a public API|REMOTE|QUESTION
+explain the SOLID principles|REMOTE|QUESTION
+tell me about a project you led that was technically complex|REMOTE|QUESTION
+can you walk me through how you handle distributed transactions|REMOTE|QUESTION
+why did you choose PostgreSQL over MongoDB in that project|REMOTE|QUESTION
+describe how garbage collection works in the JVM|REMOTE|QUESTION
+have you ever worked with event sourcing|REMOTE|QUESTION
+great answer now how would you monitor this service in production|REMOTE|QUESTION
+nice that makes sense last question for today what would you change in that architecture|REMOTE|QUESTION
+okay so the question is how do you guarantee idempotency in your consumers|REMOTE|QUESTION
+give me an example of a trade-off you made between consistency and availability|REMOTE|QUESTION
+which metrics would you track to detect latency issues|REMOTE|QUESTION
+do you prefer monoliths or microservices for a small team|REMOTE|QUESTION
+could you explain how you would test this module|REMOTE|QUESTION
+Is there anything you would do differently?|REMOTE|QUESTION
+# Não são perguntas
+here we use Kafka and Spring Boot for payments|REMOTE|NOT_QUESTION
+as I said our system is quite large|REMOTE|NOT_QUESTION
+okay sounds good|REMOTE|NOT_QUESTION
+that was a great answer thank you|REMOTE|NOT_QUESTION
+let's move on to the next part of the interview|REMOTE|NOT_QUESTION
+the team is responsible for the checkout service|REMOTE|NOT_QUESTION
+how we deploy is not really important right now|REMOTE|NOT_QUESTION
+good morning nice to meet you|REMOTE|NOT_QUESTION
+our database is PostgreSQL running on AWS|REMOTE|NOT_QUESTION
+just a quick comment about the schedule|REMOTE|NOT_QUESTION
+# Fala do candidato
+I used the transactional outbox pattern at OrionPay|SELF|NOT_QUESTION
+what would be the expected throughput?|SELF|NOT_QUESTION

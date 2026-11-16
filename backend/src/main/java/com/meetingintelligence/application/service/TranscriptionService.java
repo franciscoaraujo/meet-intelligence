@@ -345,7 +345,7 @@ public class TranscriptionService {
         }
         var event = new com.meetingintelligence.application.service.question.SegmentEvent(
                 meeting.getId(), segment.getId(), newText, segment.getAudioSource(), segment.getSpeakerRole(),
-                meeting.getUserInterviewRole(), segment.getCaptureStartMs(), segment.getCaptureEndMs());
+                meeting.getUserInterviewRole(), segment.getCaptureStartMs(), segment.getCaptureEndMs(), meeting.getLanguage());
         // Só após o commit: a detecção roda em outra thread e precisa enxergar o segmento gravado
         afterCommit(() -> questionDetection.onSegment(event));
         try {

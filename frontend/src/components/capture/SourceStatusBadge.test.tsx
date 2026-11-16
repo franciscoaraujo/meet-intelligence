@@ -4,7 +4,7 @@ import { SourceStatusBadge } from './SourceStatusBadge';
 import { emptyStats } from '../../features/capture/types';
 import type { SourceView } from '../../features/capture/useCaptureSession';
 
-const view = (patch: Partial<SourceView>): SourceView => ({ state: 'INATIVA', level: 0, stats: emptyStats(), lastError: null, ...patch });
+const view = (patch: Partial<SourceView>): SourceView => ({ state: 'INATIVA', level: 0, speaking: false, stats: emptyStats(), lastError: null, ...patch });
 
 describe('SourceStatusBadge', () => {
   it('mostra o estado de cada fonte', () => {
@@ -15,8 +15,8 @@ describe('SourceStatusBadge', () => {
 
   it('aba interrompida oferece compartilhar novamente', () => {
     const onRetry = vi.fn();
-    render(<SourceStatusBadge kind="TAB" view={view({ state: 'INTERROMPIDA' })} onRetry={onRetry} retryLabel="Compartilhar aba novamente" />);
-    fireEvent.click(screen.getByText('Compartilhar aba novamente'));
+    render(<SourceStatusBadge kind="TAB" view={view({ state: 'INTERROMPIDA' })} onRetry={onRetry} retryLabel="Compartilhar de novo" />);
+    fireEvent.click(screen.getByText('Compartilhar de novo'));
     expect(onRetry).toHaveBeenCalledOnce();
   });
 
@@ -26,5 +26,14 @@ describe('SourceStatusBadge', () => {
     expect(screen.getByRole('alert').textContent).toBe('Falha ao transcrever');
     expect(screen.getByText('1 trecho(s) perdido(s)')).toBeTruthy();
     expect(screen.getByText('2/3')).toBeTruthy();
+  });
+
+  it('spec 009 RF-03: a fonte do computador mostra a superfície escolhida', () => {
+    const { rerender } = render(<SourceStatusBadge kind="TAB" view={view({ state: 'ATIVA_SILENCIO', surface: 'monitor' })} />);
+    expect(screen.getByText(/Áudio do computador \(tela inteira\)/)).toBeTruthy();
+    rerender(<SourceStatusBadge kind="TAB" view={view({ state: 'ATIVA_SILENCIO', surface: 'browser' })} />);
+    expect(screen.getByText(/Áudio do computador \(aba\)/)).toBeTruthy();
+    rerender(<SourceStatusBadge kind="TAB" view={view({ state: 'INATIVA' })} />);
+    expect(screen.getByText(/^Áudio do computador: /)).toBeTruthy();
   });
 });

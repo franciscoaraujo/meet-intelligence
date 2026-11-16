@@ -12,4 +12,11 @@ import java.util.UUID;
  * @param text somente o texto novo (delta), nunca o segmento fundido inteiro (spec 005, RF-11)
  */
 public record SegmentEvent(UUID meetingId, UUID segmentId, String text, AudioSource audioSource, SpeakerRole speakerRole,
-                           InterviewRole interviewRole, Long captureStartMs, Long captureEndMs) {}
+                           InterviewRole interviewRole, Long captureStartMs, Long captureEndMs, String language) {
+
+    /** Sem idioma: português (compatibilidade). */
+    public SegmentEvent(UUID meetingId, UUID segmentId, String text, AudioSource audioSource, SpeakerRole speakerRole,
+                        InterviewRole interviewRole, Long captureStartMs, Long captureEndMs) {
+        this(meetingId, segmentId, text, audioSource, speakerRole, interviewRole, captureStartMs, captureEndMs, null);
+    }
+}

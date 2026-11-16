@@ -1,14 +1,22 @@
-import React, { useState } from 'react';
-import { Copy, Check, RefreshCw, XCircle, Loader2, ChevronRight } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { Copy, Check, RefreshCw, XCircle, Loader2, ChevronRight, Languages } from 'lucide-react';
 import type { AIInsight, InterviewQuestion } from '../../types';
-import { parseCopilotMetadata, SECTION_TITLES } from '../../features/copilot/copilotAnswer';
+import { parseCopilotMetadata, SECTION_TITLES, type CopilotTranslation } from '../../features/copilot/copilotAnswer';
+import { INTERVIEW_LANGUAGES } from '../../features/live/interviewLanguage';
+import { isDraftActive, type CopilotDraft } from '../../features/copilot/copilotStream';
 
 interface Props {
   question?: InterviewQuestion;
   insight?: AIInsight;
+  /** Rascunho em streaming (spec 008); enquanto ativo, substitui a resposta gravada. */
+  draft?: CopilotDraft;
+  /** 'focus' = destaque do modo entrevista (fonte maior). */
+  variant?: 'normal' | 'focus';
   onRegenerate?: (questionId: string) => void;
   onDismiss?: (questionId: string) => void;
   onJump?: (timeMs: number) => void;
+  /** Spec 012: traduz o card (pergunta, resposta falada e seções). */
+  onTranslate?: (questionId: string, language: string) => Promise<CopilotTranslation>;
   formatMs: (ms: number) => string;
 }
 
@@ -24,13 +32,60 @@ const STATUS_LABEL: Record<InterviewQuestion['status'], string> = {
  * Card do copiloto (spec 004, RF-08): versão para falar em destaque, seções expansíveis e ações.
  * Também mostra perguntas ainda sem resposta (gerando, falha ou aguardando confirmação).
  */
-export const InterviewAnswerCard: React.FC<Props> = ({ question, insight, onRegenerate, onDismiss, onJump, formatMs }) => {
+export const InterviewAnswerCard: React.FC<Props> = ({
+  question, insight, draft, variant = 'normal', onRegenerate, onDismiss, onJump, onTranslate, formatMs,
+}) => {
   const [copied, setCopied] = useState(false);
   const meta = parseCopilotMetadata(insight?.metadata);
   const questionId = question?.id ?? insight?.questionId;
-  const title = question?.questionText ?? insight?.title?.replace(/^❓\s*/, '') ?? '';
+  const originalTitle = question?.questionText ?? insight?.title?.replace(/^❓\s*/, '') ?? '';
   const status = question?.status ?? (insight ? 'ANSWERED' : 'DETECTED');
-  const spoken = meta?.answer.spoken_answer ?? (meta ? '' : insight?.description ?? '');
+  const streaming = isDraftActive(draft);
+  const originalSpoken = streaming ? draft!.text : meta?.answer.spoken_answer ?? (meta ? '' : insight?.description ?? '');
+
+  // Spec 012: tradução sob demanda; as já gravadas no card aparecem sem nova chamada
+  const [shownLanguage, setShownLanguage] = useState<string | null>(null);
+  const [localTranslations, setLocalTranslations] = useState<Record<string, CopilotTranslation>>({});
+  const [translating, setTranslating] = useState<string | null>(null);
+  const [translateError, setTranslateError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  useEffect(() => {
+    // Resposta nova (gerar de novo): as traduções antigas não valem mais
+    setShownLanguage(null);
+    setLocalTranslations({});
+    setTranslateError(null);
+  }, [meta?.answer.spoken_answer]);
+  const translations = { ...(meta?.translations ?? {}), ...localTranslations };
+  const shown = !streaming && shownLanguage ? translations[shownLanguage] : undefined;
+  const canTranslate = !!onTranslate && !!meta && !streaming && !!questionId && !!originalSpoken;
+  const languageLabel = (tag: string) => {
+    const l = INTERVIEW_LANGUAGES.find((x) => x.tag === tag);
+    return l ? `${l.flag} ${l.label}` : tag;
+  };
+
+  const translateTo = async (tag: string) => {
+    setMenuOpen(false);
+    setTranslateError(null);
+    if (translations[tag]) {
+      setShownLanguage(tag);
+      return;
+    }
+    if (!onTranslate || !questionId) return;
+    setTranslating(tag);
+    try {
+      const result = await onTranslate(questionId, tag);
+      setLocalTranslations((prev) => ({ ...prev, [tag]: result }));
+      setShownLanguage(tag);
+    } catch {
+      setTranslateError('Não foi possível traduzir agora.');
+    } finally {
+      setTranslating(null);
+    }
+  };
+
+  const title = shown?.question || originalTitle;
+  const spoken = shown?.spokenAnswer || originalSpoken;
+  const focus = variant === 'focus';
   const timeMs = question?.captureStartMs ?? insight?.startTimeMs;
 
   const copy = async () => {
@@ -55,35 +110,108 @@ export const InterviewAnswerCard: React.FC<Props> = ({ question, insight, onRege
               Simulação
             </span>
           )}
-          {status !== 'ANSWERED' && (
+          {streaming && draft!.phase === 'streaming' && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#e8eaed] text-[#444746]" title="Ainda não conferida com o currículo" data-testid="draft-badge">
+              Rascunho
+            </span>
+          )}
+          {streaming && draft!.phase !== 'streaming' && (
+            <span className="text-[10px] font-medium text-[#444746] flex items-center gap-1" data-testid="draft-status">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              {draft!.phase === 'adjusting' ? 'Ajustando a resposta…' : 'Gerando resposta…'}
+            </span>
+          )}
+          {!streaming && status !== 'ANSWERED' && (
             <span className={`text-[10px] font-medium ${status === 'FAILED' ? 'text-[#b3261e]' : 'text-[#444746]'} flex items-center gap-1`}>
               {status === 'ANSWERING' && <Loader2 className="w-3 h-3 animate-spin" />}
               {STATUS_LABEL[status]}
             </span>
           )}
         </div>
+        <div className="flex items-center gap-2">
+        {canTranslate && (
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setMenuOpen((v) => !v)}
+              disabled={translating !== null}
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              className="text-[11px] font-medium text-[#0b57d0] flex items-center gap-1 px-2 py-0.5 rounded-full border border-[#a8c7fa] bg-white hover:bg-[#e8f0fe] cursor-pointer disabled:opacity-70"
+              data-testid="translate-button"
+            >
+              {translating ? <Loader2 className="w-3 h-3 motion-safe:animate-spin" /> : <Languages className="w-3 h-3" />}
+              {translating ? 'Traduzindo…' : 'Traduzir'}
+            </button>
+            {menuOpen && (
+              <div role="menu" className="absolute right-0 z-10 mt-1 w-36 rounded-xl border border-[#e0e3e7] bg-white shadow-md py-1">
+                {INTERVIEW_LANGUAGES.map((l) => (
+                  <button
+                    key={l.tag}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => void translateTo(l.tag)}
+                    className={`w-full text-left px-3 py-1.5 text-xs hover:bg-[#f0f4f9] cursor-pointer ${shownLanguage === l.tag ? 'font-semibold text-[#0b57d0]' : 'text-[#1f1f1f]'}`}
+                  >
+                    {l.flag} {l.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         {timeMs !== undefined && timeMs !== null && onJump && (
           <button onClick={() => onJump(timeMs)} className="text-[11px] font-mono text-[#0b57d0] hover:underline flex items-center gap-0.5">
             {formatMs(timeMs)}
             <ChevronRight className="w-3 h-3" />
           </button>
         )}
+        </div>
       </div>
 
-      <h3 className="text-xs font-semibold text-[#1f1f1f]">❓ {title}</h3>
-
-      {spoken && (
-        <p className="text-[13px] text-[#1f1f1f] leading-relaxed bg-white border border-[#d3e3fd] rounded-xl p-3 whitespace-pre-line" data-testid="spoken-answer">
-          {spoken}
+      {shown && (
+        <div className="flex items-center gap-2 text-[11px]" data-testid="translation-badge">
+          <span className="px-2 py-0.5 rounded-full bg-[#e6f4ea] text-[#137333] font-semibold">Traduzido: {languageLabel(shown.language)}</span>
+          <button type="button" onClick={() => setShownLanguage(null)} className="font-medium text-[#0b57d0] hover:underline cursor-pointer">
+            Ver original
+          </button>
+        </div>
+      )}
+      {translateError && (
+        <p role="alert" className="text-[11px] text-[#b3261e]">
+          {translateError}
         </p>
       )}
 
-      {meta && (
+      <h3 className="text-xs font-semibold text-[#1f1f1f]">❓ {title}</h3>
+
+      {streaming && !spoken && (
+        <div className="bg-white border border-[#d3e3fd] rounded-xl p-3 space-y-2" aria-hidden="true" data-testid="answer-skeleton">
+          <div className="h-2.5 rounded bg-[#e8eaed] w-11/12 motion-safe:animate-pulse" />
+          <div className="h-2.5 rounded bg-[#e8eaed] w-9/12 motion-safe:animate-pulse" />
+          <div className="h-2.5 rounded bg-[#e8eaed] w-10/12 motion-safe:animate-pulse" />
+        </div>
+      )}
+
+      {spoken && (
+        <p
+          className={`${focus ? 'text-base' : 'text-[13px]'} leading-relaxed bg-white border rounded-xl p-3 whitespace-pre-line ${
+            streaming ? 'text-[#3c4043] border-dashed border-[#a8c7fa]' : 'text-[#1f1f1f] border-[#d3e3fd]'
+          }`}
+          data-testid="spoken-answer"
+          aria-live="polite"
+        >
+          {spoken}
+          {streaming && <span className="inline-block w-1.5 h-3.5 ml-0.5 align-middle bg-[#0b57d0] motion-safe:animate-pulse" aria-hidden="true" />}
+        </p>
+      )}
+
+      {meta && !streaming && (
         <details className="text-xs text-[#1f1f1f]">
           <summary className="cursor-pointer text-[#0b57d0] font-medium">Detalhes da resposta</summary>
           <div className="mt-2 space-y-1.5">
             {SECTION_TITLES.map(([key, label]) => {
-              const value = meta.answer.sections?.[key];
+              const value = shown?.sections?.[key] || meta.answer.sections?.[key];
               return value ? (
                 <p key={key}>
                   <span className="font-semibold">{label}:</span> {value}
@@ -99,12 +227,12 @@ export const InterviewAnswerCard: React.FC<Props> = ({ question, insight, onRege
 
       {questionId && (
         <div className="flex items-center gap-2 pt-1">
-          {spoken && (
+          {spoken && !streaming && (
             <button onClick={copy} className="text-[11px] font-medium text-[#0b57d0] flex items-center gap-1 cursor-pointer">
               {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />} {copied ? 'Copiado' : 'Copiar'}
             </button>
           )}
-          {onRegenerate && status !== 'ANSWERING' && (
+          {onRegenerate && status !== 'ANSWERING' && !streaming && (
             <button onClick={() => onRegenerate(questionId)} className="text-[11px] font-medium text-[#0b57d0] flex items-center gap-1 cursor-pointer">
               <RefreshCw className="w-3 h-3" /> {status === 'ANSWERED' ? 'Gerar de novo' : status === 'FAILED' ? 'Tentar novamente' : 'Responder'}
             </button>

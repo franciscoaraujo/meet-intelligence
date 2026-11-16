@@ -1,7 +1,15 @@
 import React from 'react';
 import { Mic, MonitorSpeaker } from 'lucide-react';
 import type { SourceView } from '../../features/capture/useCaptureSession';
-import type { SourceKind, SourceState } from '../../features/capture/types';
+import type { CaptureSurface, SourceKind, SourceState } from '../../features/capture/types';
+
+/** Nome da fonte do computador conforme a superfície escolhida (spec 009, RF-03). */
+const SURFACE_LABEL: Record<CaptureSurface, string> = {
+  browser: 'Áudio do computador (aba)',
+  monitor: 'Áudio do computador (tela inteira)',
+  window: 'Áudio do computador (janela)',
+  unknown: 'Áudio do computador',
+};
 
 const STATE_LABEL: Record<SourceState, string> = {
   INATIVA: 'Inativa',
@@ -44,7 +52,7 @@ export const SourceStatusBadge: React.FC<Props> = ({ kind, view, onRetry, retryL
         <span className={`text-[11px] font-semibold flex items-center gap-1.5 ${t.text}`}>
           <span className={`w-2 h-2 rounded-full ${t.dot} ${view.state === 'ATIVA_FALANDO' ? 'animate-pulse' : ''}`} />
           <Icon className="w-3.5 h-3.5" />
-          {kind === 'TAB' ? 'Aba do Meet' : 'Seu microfone'}: {STATE_LABEL[view.state]}
+          {kind === 'TAB' ? SURFACE_LABEL[view.surface ?? 'unknown'] : 'Seu microfone'}: {STATE_LABEL[view.state]}
         </span>
         <div className="flex items-center gap-2">
           {active && (

@@ -72,6 +72,16 @@ public class MeetingController {
         return ResponseEntity.ok(meetingService.updateInterviewRole(id, currentUser.getOrganizationId(), role));
     }
 
+    @PatchMapping("/{id}/language")
+    @Operation(summary = "Definir o idioma da entrevista", description = "pt-BR, en-US ou fr-FR (spec 011)")
+    public ResponseEntity<MeetingResponse> updateLanguage(
+            @PathVariable UUID id,
+            @RequestParam String language,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            com.meetingintelligence.infrastructure.security.UserPrincipal currentUser) {
+        return ResponseEntity.ok(meetingService.updateLanguage(id, currentUser.getOrganizationId(), language));
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "Excluir reunião definitivamente (LGPD)", description = "Exclusão em cascata de gravações, transcrições e análises")
     public ResponseEntity<Void> deleteMeeting(@PathVariable UUID id) {

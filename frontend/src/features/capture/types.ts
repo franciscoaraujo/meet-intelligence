@@ -2,6 +2,12 @@
 
 export type SourceKind = 'TAB' | 'MIC';
 
+/**
+ * Superfície escolhida no seletor do navegador para a fonte do computador (spec 009).
+ * O nome técnico da fonte continua 'TAB', mas ela pode ser qualquer aba ou a tela inteira.
+ */
+export type CaptureSurface = 'browser' | 'monitor' | 'window' | 'unknown';
+
 export type SourceState =
   | 'INATIVA'
   | 'SOLICITANDO_PERMISSAO'
@@ -45,5 +51,8 @@ export const emptyStats = (): UploadStats => ({
   dropped: 0,
 });
 
-/** Modo do microfone: pipeline do backend (padrão) ou Web Speech do navegador (modo anterior). */
-export type MicMode = 'BACKEND' | 'WEB_SPEECH';
+/**
+ * Modo do microfone: pipeline do backend (padrão), Web Speech do navegador (modo anterior) ou
+ * desligado (spec 008, RF-20: no modo entrevista só o participante remoto é capturado).
+ */
+export type MicMode = 'BACKEND' | 'WEB_SPEECH' | 'OFF';

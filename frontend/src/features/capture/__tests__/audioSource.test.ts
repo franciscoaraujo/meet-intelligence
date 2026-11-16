@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from 'vitest';
-import { AudioCaptureSource, stateForMediaError } from '../audioSource';
+import { AudioCaptureSource, noAudioHint, stateForMediaError } from '../audioSource';
 import { createFakeMediaEnv } from '../../../test/fakes/media';
 import type { SourceState } from '../types';
 
 const setup = (kind: 'TAB' | 'MIC', env = createFakeMediaEnv()) => {
   const states: Array<[SourceState, string | undefined]> = [];
   const frames: Array<[number, number]> = [];
+  const surfaces: string[] = [];
   const source = new AudioCaptureSource(kind, env.deps, {
     onFrame: (f, t) => frames.push([f.length, t]),
     onState: (s, d) => states.push([s, d]),
+    onSurface: (s) => surfaces.push(s),
   });
-  return { source, states, frames, env };
+  return { source, states, frames, surfaces, env };
 };
 
 describe('AudioCaptureSource', () => {
@@ -103,5 +105,46 @@ describe('AudioCaptureSource', () => {
     expect(env.contexts[0].closed).toBe(true);
     expect(env.timers).toHaveLength(0);
     expect(source.currentState).toBe('INATIVA');
+  });
+
+  describe('qualquer fonte do computador (spec 009)', () => {
+    it('CA-01: pede o áudio do sistema e esconde a aba do próprio app do seletor', async () => {
+      const { source, env } = setup('TAB');
+      await source.start();
+      expect(env.getDisplayMedia).toHaveBeenCalledWith(
+        expect.objectContaining({ video: true, systemAudio: 'include', selfBrowserSurface: 'exclude', surfaceSwitching: 'include' }),
+      );
+    });
+
+    it('CA-02: janela sem áudio → SEM_AUDIO com a orientação de janela', async () => {
+      const { source, states, surfaces } = setup('TAB', createFakeMediaEnv({ tab: 'sem-audio', surface: 'window' }));
+      await source.start();
+      expect(surfaces).toEqual(['window']);
+      expect(states[states.length - 1]).toEqual(['SEM_AUDIO', noAudioHint('window')]);
+      expect(noAudioHint('window')).toContain('Janelas não compartilham áudio');
+    });
+
+    it('CA-03: tela inteira com áudio do sistema → ativa e informa a superfície', async () => {
+      const { source, states, surfaces } = setup('TAB', createFakeMediaEnv({ surface: 'monitor' }));
+      await source.start();
+      expect(surfaces).toEqual(['monitor']);
+      expect(states[states.length - 1][0]).toBe('ATIVA_SILENCIO');
+    });
+
+    it('CA-04: tela inteira sem áudio → orienta a marcar "Compartilhar áudio do sistema"', async () => {
+      const { source, states } = setup('TAB', createFakeMediaEnv({ tab: 'sem-audio', surface: 'monitor' }));
+      await source.start();
+      expect(states[states.length - 1][1]).toContain('Compartilhar áudio do sistema');
+    });
+
+    it('aba sem áudio → orienta a marcar "Compartilhar áudio da guia"; o microfone não informa superfície', async () => {
+      const tab = setup('TAB', createFakeMediaEnv({ tab: 'sem-audio', surface: 'browser' }));
+      await tab.source.start();
+      expect(tab.states[tab.states.length - 1][1]).toContain('Compartilhar áudio da guia');
+
+      const mic = setup('MIC');
+      await mic.source.start();
+      expect(mic.surfaces).toEqual([]);
+    });
   });
 });

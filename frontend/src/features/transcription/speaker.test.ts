@@ -8,8 +8,8 @@ const seg = (patch: Partial<TranscriptSegment>): TranscriptSegment => ({
 
 describe('segmentSpeakerView', () => {
   it('CA-03: fala da aba aparece como participante remoto, com origem identificada', () => {
-    const v = segmentSpeakerView(seg({ audioSource: 'TAB', speakerRole: 'REMOTE', speakerLabel: 'Participante remoto (Meet)', speakerConfidence: 0.8 }));
-    expect(v.label).toBe('Participante remoto (Meet)');
+    const v = segmentSpeakerView(seg({ audioSource: 'TAB', speakerRole: 'REMOTE', speakerLabel: 'Participante remoto', speakerConfidence: 0.8 }));
+    expect(v.label).toBe('Participante remoto');
     expect(v.origin).toBe('TAB');
     expect(v.uncertain).toBe(false);
   });

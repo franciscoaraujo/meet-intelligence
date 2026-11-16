@@ -22,7 +22,14 @@ public record CopilotAnswer(
         @JsonProperty("resume_facts_used") List<String> resumeFactsUsed,
         @JsonProperty("assumptions") List<String> assumptions,
         @JsonProperty("confidence") Double confidence,
-        @JsonProperty("simulated") boolean simulated) {
+        @JsonProperty("simulated") boolean simulated,
+        /** Pergunta como o modelo a entendeu (pedida no botão "Pergunta terminou"); opcional. */
+        @JsonProperty("question") String interpretedQuestion) {
+
+    public CopilotAnswer(boolean questionForCandidate, String depth, String spokenAnswer, Sections sections,
+                         List<String> resumeFactsUsed, List<String> assumptions, Double confidence, boolean simulated) {
+        this(questionForCandidate, depth, spokenAnswer, sections, resumeFactsUsed, assumptions, confidence, simulated, null);
+    }
 
     @JsonIgnoreProperties(ignoreUnknown = true)
     public record Sections(

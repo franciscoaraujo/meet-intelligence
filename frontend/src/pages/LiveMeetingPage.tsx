@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useReducer, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic,
@@ -20,12 +20,22 @@ import {
   Award,
   RefreshCw,
   ChevronRight,
-  ArrowLeft
+  ArrowLeft,
+  Target,
+  Languages
 } from 'lucide-react';
 import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
 import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse, InterviewQuestion } from '../types';
 import { InterviewAnswerCard } from '../components/copilot/InterviewAnswerCard';
+import { copilotStreamReducer, isDraftActive, type CopilotStreamEvent } from '../features/copilot/copilotStream';
+import type { CopilotTranslation } from '../features/copilot/copilotAnswer';
+import { TranscriptItem, type TranscriptItemActions } from '../components/live/TranscriptItem';
+import { InterviewModeLayout } from '../components/live/InterviewModeLayout';
+import { mergeById, upsertById } from '../features/live/mergeById';
+import { useStickToBottom } from '../features/live/useStickToBottom';
+import { loadInterviewModePreference, saveInterviewModePreference } from '../features/live/interviewMode';
+import { INTERVIEW_LANGUAGES, saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
 import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
 import { manualSpeakerOptions, segmentSpeakerView, type SpeakerRole } from '../features/transcription/speaker';
@@ -72,13 +82,26 @@ export const LiveMeetingPage: React.FC = () => {
   const [highlightedTimeMs, setHighlightedTimeMs] = useState<number | null>(null);
 
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const insightsRef = useRef<AIInsight[]>([]);
+  insightsRef.current = insights;
+  // Resposta do copiloto chegando em partes, por pergunta (spec 008)
+  const [copilotDrafts, dispatchCopilot] = useReducer(copilotStreamReducer, {});
+  // Carregamento inicial: esqueletos em vez de listas vazias (spec 008, RF-13)
+  const [initialLoading, setInitialLoading] = useState(true);
+  // Modo entrevista (spec 008, RF-14/RF-15): null até a reunião carregar e a preferência ser lida
+  const [interviewMode, setInterviewMode] = useState<boolean | null>(null);
+  const [transcriptExpanded, setTranscriptExpanded] = useState(false);
+  const [systemAudioNoticeDismissed, setSystemAudioNoticeDismissed] = useState(false);
+  // "Pergunta terminou": aguardando a pergunta manual ser registrada (retorno visual no botão)
+  const [manualPending, setManualPending] = useState(false);
+  const manualPendingTimer = useRef<number | null>(null);
   const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Estados de captura de voz ao vivo (Web Speech API + Áudio da Guia do Meet) e envio direto de falas
+  // Estados de captura de voz ao vivo (Web Speech API + áudio do computador) e envio direto de falas
   const [manualSpeechInput, setManualSpeechInput] = useState('');
   const { user } = useAuth();
   const speakerOptions = manualSpeakerOptions(user?.fullName);
@@ -96,7 +119,7 @@ export const LiveMeetingPage: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Sessão de captura (spec 001): aba do Meet e microfone como fontes independentes e identificadas
+  // Sessão de captura (spec 001/009): áudio do computador (aba ou tela inteira) e microfone como fontes independentes
   const capture = useCaptureSession({
     sendChunk: async (payload) =>
       (await api.post<ChunkTranscriptionResponse>(`/meetings/${id}/transcripts/chunk`, payload)).data,
@@ -115,6 +138,10 @@ export const LiveMeetingPage: React.FC = () => {
       void sendLiveSpeechSegment(text, speakerOptions[0].label, 'MIC', 'SELF');
     },
     micSpeakerLabel: () => speakerRoleRef.current,
+    // Spec 008 RF-20: no modo entrevista só o participante remoto é capturado
+    micBlocked: interviewMode === true,
+    // Spec 011: idioma da entrevista também no microfone em modo navegador
+    language: toInterviewLanguage(meeting?.language),
   });
   const isRecording = capture.isRecording;
   const interimTranscript = capture.interim;
@@ -127,20 +154,10 @@ export const LiveMeetingPage: React.FC = () => {
       const wsService = new MeetingWebSocketService(
         id,
         (newSegment) => {
-          setTranscripts((prev) => {
-            if (prev.some((s) => s.id === newSegment.id)) {
-              return prev.map((s) => (s.id === newSegment.id ? newSegment : s));
-            }
-            return [...prev, newSegment];
-          });
+          setTranscripts((prev) => upsertById(prev, newSegment, 'end'));
         },
         (newInsight) => {
-          setInsights((prev) => {
-            if (prev.some((i) => i.id === newInsight.id)) {
-              return prev.map((i) => (i.id === newInsight.id ? newInsight : i));
-            }
-            return [newInsight, ...prev];
-          });
+          setInsights((prev) => upsertById(prev, newInsight, 'start'));
         },
         (newSummary) => {
           setSummary(newSummary);
@@ -151,9 +168,17 @@ export const LiveMeetingPage: React.FC = () => {
           if (connected) refreshAiState(id);
         },
         (question) => {
-          setQuestions((prev) =>
-            prev.some((q) => q.id === question.id) ? prev.map((q) => (q.id === question.id ? question : q)) : [...prev, question]
-          );
+          setQuestions((prev) => upsertById(prev, question, 'end'));
+          if (question.utteranceType === 'MANUAL_TRIGGER') setManualPending(false);
+        },
+        (event: CopilotStreamEvent) => {
+          dispatchCopilot(event);
+          // O COMPLETED não traz a resposta: ela chega por /insights. Se não chegar em 2 s, busca por REST.
+          if (event.type === 'COMPLETED' && event.insightId) {
+            window.setTimeout(() => {
+              if (!insightsRef.current.some((i) => i.id === event.insightId)) void refreshAiState(id);
+            }, 2000);
+          }
         }
       );
       wsService.connect();
@@ -178,12 +203,6 @@ export const LiveMeetingPage: React.FC = () => {
       clearInterval(timerRef.current);
     }
   }, [isRecording]);
-
-  useEffect(() => {
-    if (transcriptContainerRef.current) {
-      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
-    }
-  }, [transcripts]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -220,6 +239,8 @@ export const LiveMeetingPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Erro ao carregar dados da reunião:', error);
+    } finally {
+      setInitialLoading(false);
     }
   };
 
@@ -232,10 +253,12 @@ export const LiveMeetingPage: React.FC = () => {
         api.get<InterviewQuestion[]>(`/meetings/${meetingId}/questions`),
       ]);
       if (questionsRes.status === 'fulfilled' && Array.isArray(questionsRes.value.data)) {
-        setQuestions(questionsRes.value.data);
+        const serverQuestions: InterviewQuestion[] = questionsRes.value.data;
+        setQuestions((prev) => mergeById(prev, serverQuestions));
       }
       if (insightsRes.status === 'fulfilled' && Array.isArray(insightsRes.value.data)) {
-        setInsights(insightsRes.value.data);
+        const serverInsights: AIInsight[] = insightsRes.value.data;
+        setInsights((prev) => mergeById(prev, serverInsights));
       }
       if (summaryRes.status === 'fulfilled' && summaryRes.value.data) {
         setSummary(summaryRes.value.data);
@@ -244,7 +267,8 @@ export const LiveMeetingPage: React.FC = () => {
         setTranscripts((prev) => {
           const serverItems: TranscriptSegment[] = transcriptsRes.value.data;
           const tempItems = prev.filter((item) => String(item.id).startsWith('temp-'));
-          return [...serverItems, ...tempItems];
+          // Mescla por id (spec 008, RF-10): falas sem mudança mantêm o mesmo objeto e não são re-renderizadas
+          return mergeById(prev, [...serverItems, ...tempItems]);
         });
       }
     } catch (e) {
@@ -322,10 +346,28 @@ export const LiveMeetingPage: React.FC = () => {
     await sendLiveSpeechSegment(text, speakerRoleRef.current, 'MANUAL');
   };
 
-  /** Copiloto (spec 004): responder a última fala do entrevistador, gerar de novo e descartar. */
+  /**
+   * "Pergunta terminou" (spec 005 RF-09, revisto): o candidato sinaliza que o entrevistador terminou de
+   * perguntar; a fala desde a pergunta anterior vai para o copiloto, que identifica a pergunta e responde.
+   */
   const answerLatestQuestion = async () => {
-    if (!id) return;
-    await api.post(`/meetings/${id}/questions/answer-latest`).catch((e) => console.error('Erro ao acionar o copiloto:', e));
+    if (!id || manualPending) return;
+    setManualPending(true);
+    if (manualPendingTimer.current) window.clearTimeout(manualPendingTimer.current);
+    // Sem retorno do WebSocket em 8 s, libera o botão (a pergunta ainda pode chegar pela ressincronização)
+    manualPendingTimer.current = window.setTimeout(() => setManualPending(false), 8000);
+    try {
+      await api.post(`/meetings/${id}/questions/answer-latest`);
+    } catch (e) {
+      console.error('Erro ao acionar o copiloto:', e);
+      setManualPending(false);
+    }
+  };
+
+  /** Spec 012: tradução do card do copiloto (gravada no card na primeira vez). */
+  const translateAnswer = async (questionId: string, language: string): Promise<CopilotTranslation> => {
+    const res = await api.post<CopilotTranslation>(`/meetings/${id}/questions/${questionId}/translate?language=${language}`);
+    return res.data;
   };
 
   const regenerateAnswer = async (questionId: string) => {
@@ -521,6 +563,60 @@ export const LiveMeetingPage: React.FC = () => {
 
   const formatMs = (ms: number) => formatTime(Math.floor(ms / 1000));
 
+  // Ações da linha da transcrição com referência estável: o React.memo do TranscriptItem só
+  // re-renderiza a fala que mudou (spec 008, RF-10). Os handlers reais são lidos no clique.
+  const transcriptHandlers = useRef<TranscriptItemActions | null>(null);
+  transcriptHandlers.current = {
+    askAi: (text) => void askAiToAnswerQuestion(text),
+    startEdit: (segment) => {
+      setEditingSegmentId(segment.id);
+      setEditText(segment.correctedText || segment.originalText);
+    },
+    cancelEdit: () => setEditingSegmentId(null),
+    saveEdit: (segmentId) => void saveCorrection(segmentId),
+    setEditText,
+    formatMs,
+  };
+  const transcriptActions = useMemo<TranscriptItemActions>(
+    () => ({
+      askAi: (text) => transcriptHandlers.current?.askAi(text),
+      startEdit: (segment) => transcriptHandlers.current?.startEdit(segment),
+      cancelEdit: () => transcriptHandlers.current?.cancelEdit(),
+      saveEdit: (segmentId) => transcriptHandlers.current?.saveEdit(segmentId),
+      setEditText: (text) => transcriptHandlers.current?.setEditText(text),
+      formatMs: (ms) => transcriptHandlers.current?.formatMs(ms) ?? '',
+    }),
+    []
+  );
+
+  // Modo entrevista: escolha salva no navegador; sem escolha, ativo quando o usuário é o candidato
+  useEffect(() => {
+    if (meeting && interviewMode === null) setInterviewMode(loadInterviewModePreference(meeting.userInterviewRole));
+  }, [meeting, interviewMode]);
+
+  /** Spec 011: idioma da entrevista (transcrição, detecção de perguntas e respostas do copiloto). */
+  const [languageError, setLanguageError] = useState<string | null>(null);
+  const changeLanguage = async (tag: InterviewLanguageTag) => {
+    if (!id) return;
+    setLanguageError(null);
+    saveLanguagePreference(tag);
+    try {
+      const res = await api.patch<Meeting>(`/meetings/${id}/language?language=${tag}`);
+      setMeeting(res.data);
+    } catch (e) {
+      console.error('Erro ao trocar o idioma:', e);
+      setLanguageError('Não foi possível trocar o idioma.');
+    }
+  };
+
+  const toggleInterviewMode = () => {
+    const next = !interviewMode;
+    saveInterviewModePreference(next);
+    setInterviewMode(next);
+    setTranscriptExpanded(false);
+  };
+
+
   // Ordem cronológica: da fala mais antiga para a mais nova (pelo horário real de registro).
   // Itens ainda sem createdAt (otimistas ou recém-chegados) ficam no fim, na ordem de chegada.
   const chronologicalTranscripts = sortTranscriptsChronologically(transcripts);
@@ -532,6 +628,20 @@ export const LiveMeetingPage: React.FC = () => {
 
   const taskInsights = insights.filter((i) => i.category === 'TASK');
   const decisionInsights = insights.filter((i) => i.category === 'DECISION');
+  // Modo entrevista: só a transcrição recente, salvo se o usuário expandir
+  const visibleTranscripts = interviewMode && !transcriptExpanded && !searchTerm ? filteredTranscripts.slice(-3) : filteredTranscripts;
+  const { newCount: newTranscriptCount, scrollToBottom: scrollTranscriptToBottom } = useStickToBottom(
+    transcriptContainerRef,
+    filteredTranscripts.length,
+    `${visibleTranscripts[visibleTranscripts.length - 1]?.id ?? ''}|${interimTranscript ?? ''}`
+  );
+
+  // Perguntas ainda sem card de resposta gravado: gerando (com ou sem rascunho), falha ou aguardando confirmação
+  const pendingQuestions = questions.filter(
+    (q) =>
+      !q.answerInsightId &&
+      (isDraftActive(copilotDrafts[q.id]) || q.status === 'ANSWERING' || q.status === 'FAILED' || (q.status === 'DETECTED' && !q.autoAnswer))
+  );
 
   return (
     <div className="flex flex-col h-[calc(100vh-76px)] max-h-[calc(100vh-76px)] bg-white overflow-hidden">
@@ -540,7 +650,7 @@ export const LiveMeetingPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-3.5 h-3.5 text-[#0b57d0]" />
           <span>
-            <strong>Aviso de Consentimento:</strong> Gravação e análise de IA em tempo real em conformidade com a LGPD.
+            <strong>Aviso de Consentimento:</strong> grave e analise com IA somente com o consentimento de todos os participantes da reunião ou ligação (LGPD).
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -581,6 +691,34 @@ export const LiveMeetingPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <label className="flex items-center gap-1.5 text-xs text-[#444746]" title="Idioma da entrevista: captura, perguntas e respostas do copiloto">
+            <Languages className="w-3.5 h-3.5 text-[#0b57d0]" />
+            <select
+              value={toInterviewLanguage(meeting?.language)}
+              onChange={(e) => void changeLanguage(e.target.value as InterviewLanguageTag)}
+              className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f]"
+              aria-label="Idioma da entrevista"
+              data-testid="interview-language"
+            >
+              {INTERVIEW_LANGUAGES.map((l) => (
+                <option key={l.tag} value={l.tag}>
+                  {l.flag} {l.label}
+                </option>
+              ))}
+            </select>
+            {languageError && <span role="alert" className="text-[11px] text-[#b3261e]">{languageError}</span>}
+          </label>
+          <button
+            type="button"
+            onClick={toggleInterviewMode}
+            aria-pressed={!!interviewMode}
+            className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${interviewMode ? '!bg-[#d3e3fd] !border-[#0b57d0] !text-[#041e49]' : ''}`}
+            title="Destaca a pergunta atual e a resposta sugerida"
+            data-testid="interview-mode-toggle"
+          >
+            <Target className="w-3.5 h-3.5" />
+            <span>{interviewMode ? 'Sair do modo entrevista' : 'Modo entrevista'}</span>
+          </button>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*,video/*" className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -596,31 +734,40 @@ export const LiveMeetingPage: React.FC = () => {
             className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${
               tabCaptureOn ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
             }`}
-            title="Compartilhar o áudio da aba do Google Meet (marque 'Compartilhar áudio da guia') para capturar a voz do entrevistador"
+            title={
+              'Captura o som de qualquer fonte do computador (spec 009):\n' +
+              '• Uma aba (Meet, WhatsApp Web, YouTube…): marque "Compartilhar áudio da guia".\n' +
+              '• Todo o som do PC, inclusive apps como WhatsApp, Teams e Zoom: escolha "Tela inteira" e marque "Compartilhar áudio do sistema" (Windows/ChromeOS).\n' +
+              'Janelas não compartilham áudio.'
+            }
+            data-testid="computer-audio-toggle"
           >
             <Volume2 className="w-3.5 h-3.5" />
-            <span>{tabCaptureOn ? 'Parar captura da aba' : 'Capturar Áudio da Guia Meet'}</span>
+            <span>{tabCaptureOn ? 'Parar captura do computador' : 'Capturar áudio do computador'}</span>
           </button>
 
           <select
-            value={capture.micMode}
-            onChange={(e) => capture.setMicMode(e.target.value as 'BACKEND' | 'WEB_SPEECH')}
-            disabled={isRecording}
+            value={interviewMode ? 'OFF' : capture.micMode}
+            onChange={(e) => void capture.setMicMode(e.target.value as 'BACKEND' | 'WEB_SPEECH' | 'OFF')}
+            disabled={!!interviewMode}
             className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f] disabled:opacity-60"
             title="Como transcrever o seu microfone"
             aria-label="Modo de transcrição do microfone"
           >
             <option value="BACKEND">Microfone: transcrição do servidor</option>
             <option value="WEB_SPEECH">Microfone: reconhecimento do navegador (Google)</option>
+            <option value="OFF">{interviewMode ? 'Microfone: desligado no modo entrevista' : 'Microfone: desligado (só o participante remoto)'}</option>
           </select>
 
           <button
             onClick={answerLatestQuestion}
-            className="md-btn-tonal !py-1.5 !px-3.5 !text-xs"
-            title="Gera a sugestão de resposta para a última fala do entrevistador"
+            disabled={manualPending}
+            className="md-btn-tonal !py-1.5 !px-3.5 !text-xs disabled:opacity-70"
+            title="Clique quando o entrevistador terminar de perguntar: o copiloto responde à fala dele desde a pergunta anterior"
+            data-testid="question-finished"
           >
-            <Sparkles className="w-3.5 h-3.5" />
-            <span>Responder última pergunta</span>
+            <Sparkles className={`w-3.5 h-3.5 ${manualPending ? 'motion-safe:animate-spin' : ''}`} />
+            <span>{manualPending ? 'Enviando pergunta…' : 'Pergunta terminou'}</span>
           </button>
 
           <button
@@ -664,7 +811,7 @@ export const LiveMeetingPage: React.FC = () => {
       {/* Grid Principal: 3 ÁREAS */}
       <div className="flex-1 grid grid-cols-12 grid-rows-[minmax(0,1fr)] min-h-0 h-full overflow-hidden divide-x divide-[#e0e3e7]">
         {/* ÁREA 1: TRANSCRIÇÃO AO VIVO (5 Colunas) */}
-        <section className="col-span-5 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-white">
+        <section className={`${interviewMode ? 'col-span-4' : 'col-span-5'} flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-white`}>
           <div className="p-3.5 border-b border-[#e0e3e7] flex items-center justify-between gap-3 shrink-0 bg-[#f8fafd]">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-[#0b57d0]" />
@@ -708,15 +855,27 @@ export const LiveMeetingPage: React.FC = () => {
           </div>
 
           {/* Estado de cada fonte de áudio (spec 001, RF-04/RF-11) */}
-          {(isRecording || capture.mic.state !== 'INATIVA') && <SourceStatusBadge kind="MIC" view={capture.mic} />}
+          {!interviewMode && capture.micMode !== 'OFF' && (isRecording || capture.mic.state !== 'INATIVA') && <SourceStatusBadge kind="MIC" view={capture.mic} />}
           {tabCaptureOn && (
             <SourceStatusBadge
               kind="TAB"
               view={capture.tab}
               onRetry={() => capture.startTab()}
-              retryLabel="Compartilhar aba novamente"
+              retryLabel="Compartilhar de novo"
             />
           )}
+          {/* Spec 009 RF-05: a tela inteira captura todo o som do PC */}
+          {capture.tab.surface === 'monitor' && tabCaptureOn && !systemAudioNoticeDismissed && (
+            <div role="status" data-testid="system-audio-notice" className="px-3.5 py-1.5 border-b border-[#d3e3fd] bg-[#e8f0fe] text-[11px] text-[#041e49] flex items-center justify-between gap-2 shrink-0">
+              <span>
+                Todo o som do computador está sendo capturado: notificações, músicas e vídeos também serão transcritos.
+              </span>
+              <button type="button" onClick={() => setSystemAudioNoticeDismissed(true)} className="font-semibold cursor-pointer">
+                OK
+              </button>
+            </div>
+          )}
+
           {capture.overlapWarning && (
             <div role="status" className="px-3.5 py-1.5 border-b border-[#fde293] bg-[#fef7e0] text-[11px] text-[#5f4300] flex items-center justify-between gap-2 shrink-0">
               <span>
@@ -729,106 +888,76 @@ export const LiveMeetingPage: React.FC = () => {
           )}
 
           <div ref={transcriptContainerRef} className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
-            {filteredTranscripts.length === 0 ? (
+            {initialLoading ? (
+              <div className="space-y-3" aria-busy="true" data-testid="transcript-skeleton">
+                {[0, 1, 2].map((k) => (
+                  <div key={k} className="p-3.5 rounded-2xl border border-[#e0e3e7] bg-[#f8fafd] space-y-2">
+                    <div className="h-2.5 w-1/3 rounded bg-[#e8eaed] motion-safe:animate-pulse" />
+                    <div className="h-2.5 w-11/12 rounded bg-[#e8eaed] motion-safe:animate-pulse" />
+                    <div className="h-2.5 w-8/12 rounded bg-[#e8eaed] motion-safe:animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            ) : filteredTranscripts.length === 0 ? (
               <div className="text-center py-12 text-[#444746] text-xs">
                 Nenhum áudio transcrito ainda. Inicie a captura ou envie um arquivo de mídia para começar.
               </div>
             ) : (
-              filteredTranscripts.map((segment) => (
-                <div
-                  key={segment.id}
-                  id={`segment-${segment.startTimeMs}`}
-                  className={`p-3.5 rounded-2xl border transition-all space-y-1.5 group ${
-                    highlightedTimeMs === segment.startTimeMs
-                      ? 'bg-[#e8f0fe] border-[#0b57d0] shadow-sm'
-                      : 'bg-[#f8fafd] border-[#e0e3e7] hover:border-[#c4c7c5]'
-                  }`}
+              <>
+              {interviewMode && !searchTerm && filteredTranscripts.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => setTranscriptExpanded((v) => !v)}
+                  className="w-full text-[11px] font-medium text-[#0b57d0] hover:underline cursor-pointer"
                 >
-                  <div className="flex items-center justify-between text-xs">
-                    {(() => {
-                      const v = segmentSpeakerView(segment);
-                      const OriginIcon = v.origin === 'TAB' ? MonitorSpeaker : v.origin === 'MIC' ? Mic : Users;
-                      return (
-                        <span
-                          className={`font-semibold flex items-center gap-1.5 ${v.uncertain ? 'text-[#747775] italic' : 'text-[#0b57d0]'}`}
-                          title={v.title}
-                        >
-                          <OriginIcon className="w-3.5 h-3.5" />
-                          {v.label}
-                          {v.uncertain && <span className="text-[10px] font-normal">(incerto)</span>}
-                        </span>
-                      );
-                    })()}
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => askAiToAnswerQuestion(segment.correctedText || segment.originalText)}
-                        className="px-2 py-0.5 rounded-full bg-[#e8f0fe] hover:bg-[#d3e3fd] text-[#0b57d0] text-[10px] font-semibold transition-colors cursor-pointer"
-                        title="Gerar resposta técnica para esta fala no Chat RAG"
-                      >
-                        💡 Responder com IA
-                      </button>
-                      <span className="text-[11px] font-mono text-[#444746]">{formatMs(segmentSpeakerView(segment).timeMs)}</span>
-                      {editingSegmentId !== segment.id && (
-                        <button
-                          onClick={() => {
-                            setEditingSegmentId(segment.id);
-                            setEditText(segment.correctedText || segment.originalText);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-[#444746] hover:text-[#0b57d0] transition-opacity"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {editingSegmentId === segment.id ? (
-                    <div className="mt-2 space-y-2">
-                      <textarea
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        className="md-input bg-white text-xs"
-                        rows={2}
-                      />
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => setEditingSegmentId(null)}
-                          className="px-2.5 py-1 text-xs text-[#444746] hover:bg-[#e0e3e7] rounded-full"
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          onClick={() => saveCorrection(segment.id)}
-                          className="px-3 py-1 text-xs bg-[#0b57d0] text-white font-medium rounded-full flex items-center gap-1"
-                        >
-                          <Check className="w-3 h-3" /> Salvar
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-sm text-[#1f1f1f] leading-relaxed">
-                        {segment.correctedText || segment.originalText}
-                      </p>
-                      {segment.correctedText && (
-                        <p className="text-[10px] text-[#747775] italic mt-0.5">Original: "{segment.originalText}"</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))
+                  {transcriptExpanded ? 'Mostrar só as últimas falas' : `Mostrar todas as ${filteredTranscripts.length} falas`}
+                </button>
+              )}
+              {visibleTranscripts.map((segment) => (
+                <TranscriptItem
+                  key={segment.id}
+                  segment={segment}
+                  highlighted={highlightedTimeMs === segment.startTimeMs}
+                  isEditing={editingSegmentId === segment.id}
+                  editText={editingSegmentId === segment.id ? editText : ''}
+                  actions={transcriptActions}
+                />
+              ))}
+              </>
             )}
-            {interimTranscript && (
-              <div className="p-3.5 rounded-2xl border border-dashed border-[#0b57d0] bg-[#e8f0fe]/60 space-y-1 animate-pulse">
-                <span className="text-[11px] font-semibold text-[#0b57d0] flex items-center gap-1.5">
-                  <Mic className="w-3 h-3" /> Capturando voz do microfone...
+            {/* Spec 008 RF-18: o VAD da aba tem um trecho de fala aberto (a transcrição chega quando ele fechar) */}
+            {capture.tab.speaking && (
+              <div className="mi-enter px-3.5 py-2 rounded-2xl border border-dashed border-[#c4c7c5] bg-[#f8fafd] flex items-center gap-2" role="status" data-testid="remote-speaking">
+                <MonitorSpeaker className="w-3.5 h-3.5 text-[#444746]" />
+                <span className="text-[11px] font-medium text-[#444746]">Participante remoto falando…</span>
+                <span className="ml-auto h-1.5 w-16 rounded-full bg-[#e0e3e7] overflow-hidden" aria-hidden="true">
+                  <span className="block h-full bg-[#0b57d0] transition-[width] duration-100" style={{ width: `${capture.tab.level}%` }} />
                 </span>
-                <p className="text-xs text-[#1f1f1f] italic">{interimTranscript}</p>
+              </div>
+            )}
+            {/* Spec 008 RF-17: texto provisório do microfone, só na tela (nunca enviado como segmento) */}
+            {interimTranscript && (
+              <div className="mi-enter p-3.5 rounded-2xl border border-dashed border-[#a8c7fa] bg-[#e8f0fe]/40 space-y-1" data-testid="mic-interim">
+                <span className="text-[11px] font-semibold text-[#0b57d0] flex items-center gap-1.5">
+                  <Mic className="w-3 h-3" /> Você (falando…)
+                </span>
+                <p className="text-xs text-[#5f6368] italic">{interimTranscript}</p>
               </div>
             )}
             <div ref={transcriptEndRef} />
           </div>
+          {newTranscriptCount > 0 && (
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={scrollTranscriptToBottom}
+                className="absolute -top-11 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-[#0b57d0] text-white text-[11px] font-medium shadow-md cursor-pointer"
+                data-testid="new-transcripts"
+              >
+                {newTranscriptCount === 1 ? '1 nova fala ↓' : `${newTranscriptCount} novas falas ↓`}
+              </button>
+            </div>
+          )}
 
           {/* Barra inferior para ditar ou simular falas na reunião e enviar para a IA */}
           <form
@@ -874,6 +1003,23 @@ export const LiveMeetingPage: React.FC = () => {
           </form>
         </section>
 
+        {interviewMode ? (
+          <section className="col-span-8 h-full max-h-full min-h-0 overflow-hidden bg-[#f8fafd]/60">
+            <InterviewModeLayout
+              questions={questions}
+              insights={insights}
+              drafts={copilotDrafts}
+              formatMs={formatMs}
+              onJump={jumpToTimestamp}
+              onRegenerate={regenerateAnswer}
+              onDismiss={dismissQuestion}
+                        onTranslate={translateAnswer}
+              onAnswerLatest={answerLatestQuestion}
+              manualPending={manualPending}
+            />
+          </section>
+        ) : (
+        <>
         {/* ÁREA 2: AI INSIGHTS AUTOMÁTICOS (4 Colunas) */}
         <section className="col-span-4 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-[#f8fafd]/60">
           <div className="p-3 border-b border-[#e0e3e7] flex items-center justify-between shrink-0 bg-[#f8fafd]">
@@ -921,22 +1067,22 @@ export const LiveMeetingPage: React.FC = () => {
           <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
             {activeTab === 'insights' && (
               <>
-                {insights.length === 0 ? (
+                {insights.length === 0 && pendingQuestions.length === 0 ? (
                   <div className="text-center py-12 text-[#444746] text-xs">
                     Nenhum insight gerado ainda. A IA analisa as falas a cada bloco semântico.
                   </div>
                 ) : (
                   <>
-                  {questions
-                    .filter((q) => !q.answerInsightId && (q.status === 'ANSWERING' || q.status === 'FAILED' || (q.status === 'DETECTED' && !q.autoAnswer)))
-                    .map((q) => (
+                  {pendingQuestions.map((q) => (
                       <InterviewAnswerCard
                         key={`q-${q.id}`}
                         question={q}
+                        draft={copilotDrafts[q.id]}
                         formatMs={formatMs}
                         onJump={jumpToTimestamp}
                         onRegenerate={regenerateAnswer}
                         onDismiss={dismissQuestion}
+                        onTranslate={translateAnswer}
                       />
                     ))}
                   {insights.map((ins) => ins.category === 'QUESTION' ? (
@@ -944,10 +1090,12 @@ export const LiveMeetingPage: React.FC = () => {
                       key={ins.id}
                       insight={ins}
                       question={questions.find((q) => q.id === ins.questionId)}
+                      draft={ins.questionId ? copilotDrafts[ins.questionId] : undefined}
                       formatMs={formatMs}
                       onJump={jumpToTimestamp}
                       onRegenerate={regenerateAnswer}
                       onDismiss={dismissQuestion}
+                        onTranslate={translateAnswer}
                     />
                   ) : (
                     <div
@@ -1155,6 +1303,8 @@ export const LiveMeetingPage: React.FC = () => {
             </button>
           </form>
         </section>
+        </>
+        )}
       </div>
     </div>
   );

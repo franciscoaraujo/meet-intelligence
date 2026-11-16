@@ -1,6 +1,7 @@
 package com.meetingintelligence.presentation.controller;
 
 import com.meetingintelligence.application.exception.ResourceNotFoundException;
+import com.meetingintelligence.application.service.question.AnswerTranslationService;
 import com.meetingintelligence.application.service.question.InterviewCopilot;
 import com.meetingintelligence.application.service.question.QuestionDetectionService;
 import com.meetingintelligence.domain.entity.InterviewQuestion;
@@ -29,6 +30,7 @@ public class QuestionController {
     private final MeetingRepository meetings;
     private final QuestionDetectionService detection;
     private final InterviewCopilot copilot;
+    private final AnswerTranslationService translations;
 
     @GetMapping
     @Operation(summary = "Listar perguntas detectadas")
@@ -54,6 +56,18 @@ public class QuestionController {
         requireQuestion(meetingId, questionId, user);
         copilot.answer(questionId);
         return ResponseEntity.accepted().build();
+    }
+
+    @PostMapping("/{questionId}/translate")
+    @Operation(summary = "Traduzir o card do copiloto", description = "pt-BR, en-US ou fr-FR (spec 012); 503 se a IA estiver indisponível")
+    public ResponseEntity<?> translate(@PathVariable UUID meetingId, @PathVariable UUID questionId,
+                                       @RequestParam String language, @AuthenticationPrincipal UserPrincipal user) {
+        requireQuestion(meetingId, questionId, user);
+        try {
+            return ResponseEntity.ok(translations.translate(meetingId, questionId, language));
+        } catch (AnswerTranslationService.TranslationUnavailableException e) {
+            return ResponseEntity.status(503).body(java.util.Map.of("message", "Não foi possível traduzir agora."));
+        }
     }
 
     @PostMapping("/{questionId}/dismiss")

@@ -3,6 +3,7 @@ package com.meetingintelligence.application.service.question;
 import com.meetingintelligence.domain.entity.InterviewQuestion;
 import com.meetingintelligence.domain.entity.TranscriptSegment;
 import com.meetingintelligence.domain.enums.InterviewRole;
+import com.meetingintelligence.domain.language.InterviewLanguage;
 import com.meetingintelligence.domain.question.EchoGuard;
 import com.meetingintelligence.domain.question.QuestionDeduplicator;
 import com.meetingintelligence.domain.question.UtteranceAssembler;
@@ -27,6 +28,7 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashSet;
@@ -66,6 +68,8 @@ public class QuestionDetectionService {
     private final EchoGuard echoGuard = EchoGuard.withSpecDefaults();
     private final QuestionDeduplicator dedup = QuestionDeduplicator.withSpecDefaults();
     private final Map<UUID, InterviewRole> interviewRoles = new ConcurrentHashMap<>();
+    /** Idioma da reunião (spec 011): escolhe as regras do classificador. */
+    private final Map<UUID, InterviewLanguage> languages = new ConcurrentHashMap<>();
 
     @Autowired
     public QuestionDetectionService(InterviewQuestionRepository questions, TranscriptSegmentRepository segments,
@@ -94,14 +98,24 @@ public class QuestionDetectionService {
         if (event.text() == null || event.text().isBlank() || event.audioSource() == AudioSource.UPLOAD) return;
         long receivedAt = clock.getAsLong();
         if (event.interviewRole() != null) interviewRoles.put(event.meetingId(), event.interviewRole());
+        if (event.language() != null) languages.put(event.meetingId(), InterviewLanguage.fromTag(event.language()));
         serial.submit(event.meetingId(), () -> handle(event, receivedAt));
     }
 
-    /** Gatilho manual "Responder com IA" (RF-09): usa a fala remota em aberto ou as últimas falas remotas. */
+    /** Janela máxima da fala considerada no botão "Pergunta terminou". */
+    static final long MANUAL_WINDOW_MS = 120_000;
+    static final int MANUAL_MAX_SEGMENTS = 10;
+
+    /**
+     * Botão "Pergunta terminou" (RF-09, revisto em 2026-11-15): o candidato sinaliza que o entrevistador
+     * terminou de perguntar. O texto é toda a fala remota desde a pergunta anterior (até 120 s); o
+     * copiloto identifica a pergunta no fim do trecho e sempre responde.
+     */
     public void triggerManual(UUID meetingId) {
         serial.submit(meetingId, () -> {
             Optional<Utterance> open = assembler.closeNow(meetingId, AudioSource.TAB);
-            Utterance utterance = open.orElseGet(() -> recentRemoteSpeech(meetingId));
+            Utterance utterance = remoteSpeechSinceLastQuestion(meetingId, open.orElse(null));
+            if (utterance == null) utterance = open.orElseGet(() -> recentRemoteSpeech(meetingId));
             if (utterance == null) {
                 log.info("Gatilho manual sem fala remota recente para a reunião {}", meetingId);
                 return;
@@ -148,7 +162,8 @@ public class QuestionDetectionService {
 
     private void process(Utterance u, boolean forced) {
         InterviewRole role = interviewRoles.get(u.meetingId());
-        Classification c = UtteranceClassifier.classify(u.text(), u.role(), role);
+        Classification c = UtteranceClassifier.classify(u.text(), u.role(), role,
+                languages.getOrDefault(u.meetingId(), InterviewLanguage.PT_BR));
         meters.counter("questions.classified", "type", c.type().name()).increment();
 
         if (!forced) {
@@ -160,7 +175,7 @@ public class QuestionDetectionService {
             }
             if (c.score() < UtteranceClassifier.REVIEW_THRESHOLD) return;
         }
-        UtteranceType type = c.type().isQuestion() ? c.type() : UtteranceType.INDIRECT_QUESTION;
+        UtteranceType type = forced ? UtteranceType.MANUAL_TRIGGER : c.type();
         boolean autoAnswer = forced || c.autoAnswer();
 
         long now = clock.getAsLong();
@@ -205,7 +220,8 @@ public class QuestionDetectionService {
         log.info("Pergunta repetida/continuada: id={} similaridade={} novaResposta={}",
                 saved.getId(), String.format("%.2f", decision.similarity()), reanswer);
         publish(saved);
-        if (reanswer || (forced && saved.getStatus() != InterviewQuestion.Status.ANSWERED)) {
+        boolean busy = saved.getStatus() == InterviewQuestion.Status.ANSWERING;
+        if (!busy && (reanswer || (forced && saved.getStatus() != InterviewQuestion.Status.ANSWERED))) {
             requestAnswer(saved);
         }
     }
@@ -213,6 +229,43 @@ public class QuestionDetectionService {
     private void requestAnswer(InterviewQuestion q) {
         meters.counter("copilot.calls").increment();
         copilot.answer(q.getId());
+    }
+
+    /**
+     * Fala remota (sem eco) registrada depois da última pergunta não descartada, nos últimos 120 s
+     * (no máximo 10 trechos). Inclui o enunciado em aberto, se ainda não estiver no banco.
+     */
+    private Utterance remoteSpeechSinceLastQuestion(UUID meetingId, Utterance open) {
+        OffsetDateTime boundary = questions.findTop20ByMeetingIdOrderByCreatedAtDesc(meetingId).stream()
+                .filter(q -> q.getStatus() != InterviewQuestion.Status.DISMISSED && q.getCreatedAt() != null)
+                .map(InterviewQuestion::getCreatedAt)
+                .findFirst().orElse(null);
+        OffsetDateTime windowStart = OffsetDateTime.ofInstant(Instant.ofEpochMilli(clock.getAsLong() - MANUAL_WINDOW_MS),
+                java.time.ZoneOffset.UTC);
+        OffsetDateTime from = boundary == null || boundary.isBefore(windowStart) ? windowStart : boundary;
+
+        List<TranscriptSegment> remote = new ArrayList<>();
+        for (TranscriptSegment s : segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId)) {
+            if (s.getSpeakerRole() == SpeakerRole.REMOTE && !s.isEchoSuspected()
+                    && s.getCreatedAt() != null && s.getCreatedAt().isAfter(from)) {
+                remote.add(s);
+            }
+        }
+        if (remote.size() > MANUAL_MAX_SEGMENTS) remote = remote.subList(remote.size() - MANUAL_MAX_SEGMENTS, remote.size());
+
+        List<UUID> ids = new ArrayList<>(remote.stream().map(TranscriptSegment::getId).toList());
+        StringBuilder text = new StringBuilder(remote.stream()
+                .map(s -> s.getCorrectedText() != null ? s.getCorrectedText() : s.getOriginalText())
+                .reduce((a, b) -> a + " " + b).orElse(""));
+        if (open != null && !ids.containsAll(open.segmentIds())) {
+            if (!text.isEmpty()) text.append(' ');
+            text.append(open.text());
+            open.segmentIds().stream().filter(id -> !ids.contains(id)).forEach(ids::add);
+        }
+        if (text.isEmpty()) return null;
+        Long start = !remote.isEmpty() ? remote.get(0).getCaptureStartMs() : open.captureStartMs();
+        Long end = open != null ? open.captureEndMs() : remote.get(remote.size() - 1).getCaptureEndMs();
+        return new Utterance(meetingId, AudioSource.TAB, SpeakerRole.REMOTE, text.toString(), ids, start, end, clock.getAsLong());
     }
 
     private Utterance recentRemoteSpeech(UUID meetingId) {

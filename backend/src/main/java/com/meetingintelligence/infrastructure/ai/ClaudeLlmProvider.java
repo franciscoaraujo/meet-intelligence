@@ -16,7 +16,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -30,15 +29,27 @@ public class ClaudeLlmProvider implements LLMProvider {
     private final String model;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final SseClient sse;
+    private final String streamUrl;
 
+    private static final String URL = "https://api.anthropic.com/v1/messages";
+
+    @org.springframework.beans.factory.annotation.Autowired
     public ClaudeLlmProvider(
             @Value("${app.ai.claude.api-key:mock-key}") String apiKey,
             @Value("${app.ai.claude.model:" + AiModels.CLAUDE_DEFAULT + "}") String model,
             ObjectMapper objectMapper) {
+        this(apiKey, model, objectMapper, new SseClient(java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(20)), URL);
+    }
+
+    /** Construtor de teste: permite apontar o streaming para um servidor local. */
+    ClaudeLlmProvider(String apiKey, String model, ObjectMapper objectMapper, SseClient sse, String streamUrl) {
         this.apiKey = apiKey;
         this.model = model;
         this.restTemplate = new RestTemplate();
         this.objectMapper = objectMapper;
+        this.sse = sse;
+        this.streamUrl = streamUrl;
     }
 
     @Override
@@ -74,39 +85,14 @@ public class ClaudeLlmProvider implements LLMProvider {
             return generateMockResponse(request, startTime, effectiveModel);
         }
 
-        String url = "https://api.anthropic.com/v1/messages";
-
         HttpHeaders headers = new HttpHeaders();
         headers.setContentType(MediaType.APPLICATION_JSON);
-        headers.set("x-api-key", effectiveKey);
-        headers.set("anthropic-version", "2023-06-01");
-
-        Map<String, Object> body = new HashMap<>();
-        body.put("model", effectiveModel);
-        body.put("max_tokens", resolveMaxTokens(request, effectiveModel));
-
-        // Modelos Claude atuais (geração 4.7+/5.x) rejeitam temperature/top_p/top_k com HTTP 400.
-        if (acceptsSamplingParams(effectiveModel)) {
-            body.put("temperature", request.getTemperature() != null ? request.getTemperature() : 0.2);
-        }
-
-        // Fallback no servidor: se o modelo recusar a resposta por política, a API reexecuta no modelo de apoio.
-        if (supportsServerSideFallback(effectiveModel)) {
-            headers.set("anthropic-beta", "server-side-fallback-2026-07-01");
-            body.put("fallbacks", "default");
-        }
-
-        if (request.getSystemPrompt() != null && !request.getSystemPrompt().isBlank()) {
-            body.put("system", request.getSystemPrompt());
-        }
-
-        List<Map<String, String>> messages = new ArrayList<>();
-        messages.add(Map.of("role", "user", "content", request.getUserPrompt()));
-        body.put("messages", messages);
+        apiHeaders(effectiveKey, effectiveModel).forEach(headers::set);
+        Map<String, Object> body = buildBody(request, effectiveModel);
 
         ResponseEntity<String> response;
         try {
-            response = restTemplate.postForEntity(url, new HttpEntity<>(body, headers), String.class);
+            response = restTemplate.postForEntity(URL, new HttpEntity<>(body, headers), String.class);
         } catch (org.springframework.web.client.HttpStatusCodeException e) {
             // Erro real da API (chave inválida, modelo inexistente, parâmetro rejeitado...): propaga para que
             // o teste de conexão mostre a falha e o orquestrador acione o provedor de fallback.
@@ -158,6 +144,146 @@ public class ClaudeLlmProvider implements LLMProvider {
         } catch (Exception e) {
             throw new IllegalStateException("Resposta inesperada da Claude API: " + e.getMessage(), e);
         }
+    }
+
+    /**
+     * Streaming pela Messages API ({@code "stream": true}, spec 008). Repassa os {@code text_delta};
+     * blocos de raciocínio são ignorados. Sem chave, usa a simulação local em uma única parte.
+     */
+    @Override
+    public LLMResponse stream(LLMRequest request, String overrideApiKey, String overrideModel,
+                              com.meetingintelligence.domain.ai.LlmStreamListener listener) {
+        long startTime = System.currentTimeMillis();
+        String effectiveKey = (overrideApiKey != null && !overrideApiKey.isBlank()) ? overrideApiKey : this.apiKey;
+        String effectiveModel = (overrideModel != null && !overrideModel.isBlank()) ? overrideModel : this.model;
+        if (effectiveKey == null || effectiveKey.isBlank() || effectiveKey.equals("mock-key")) {
+            return LLMProvider.super.stream(request, overrideApiKey, overrideModel, listener);
+        }
+
+        Map<String, Object> body = buildBody(request, effectiveModel);
+        body.put("stream", true);
+        // Sem o fallback do lado da Anthropic no streaming: uma reexecução no meio do stream duplicaria texto
+        // já entregue; a falha é tratada pelo AIOrchestrator e pelas novas tentativas do copiloto.
+        body.remove("fallbacks");
+        Map<String, String> headers = apiHeaders(effectiveKey, effectiveModel);
+        headers.remove("anthropic-beta");
+        StreamAccumulator acc = new StreamAccumulator(objectMapper, listener);
+        try {
+            sse.post(streamUrl, headers, objectMapper.writeValueAsString(body), acc::accept);
+        } catch (SseClient.HttpStatusException e) {
+            String detail = extractApiErrorMessage(e.body());
+            log.error("Erro no streaming da Anthropic Claude API ({}): {}", e.status(), detail);
+            throw new IllegalStateException("Claude API retornou HTTP " + e.status() + ": " + detail, e);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Falha ao montar a requisição da Claude API", e);
+        }
+        if (!acc.stopped) {
+            throw new IllegalStateException("Streaming da Claude API terminou sem message_stop");
+        }
+        if ("refusal".equals(acc.stopReason)) {
+            throw new IllegalStateException("Claude recusou a solicitação (stop_reason=refusal).");
+        }
+        if (acc.text.isEmpty()) {
+            throw new IllegalStateException("Claude não retornou texto (stop_reason=" + acc.stopReason + ").");
+        }
+        String servedModel = acc.model != null ? acc.model : effectiveModel;
+        return LLMResponse.builder()
+                .providerName(getProviderName())
+                .modelName(servedModel)
+                .content(acc.text.toString())
+                .promptTokens(acc.inputTokens)
+                .completionTokens(acc.outputTokens)
+                .totalTokens(acc.inputTokens + acc.outputTokens)
+                .estimatedCostUsd(estimateCost(servedModel, acc.inputTokens, acc.outputTokens))
+                .latencyMs(System.currentTimeMillis() - startTime)
+                .build();
+    }
+
+    /** Processa, na ordem, os eventos SSE da Messages API. */
+    static final class StreamAccumulator {
+        private final ObjectMapper objectMapper;
+        private final com.meetingintelligence.domain.ai.LlmStreamListener listener;
+        final StringBuilder text = new StringBuilder();
+        String model;
+        String stopReason;
+        int inputTokens;
+        int outputTokens;
+        boolean stopped;
+
+        StreamAccumulator(ObjectMapper objectMapper, com.meetingintelligence.domain.ai.LlmStreamListener listener) {
+            this.objectMapper = objectMapper;
+            this.listener = listener;
+        }
+
+        void accept(SseClient.Event event) {
+            if (event.data() == null || event.data().isBlank()) return;
+            JsonNode node;
+            try {
+                node = objectMapper.readTree(event.data());
+            } catch (Exception e) {
+                log.debug("Evento SSE da Claude API ignorado (JSON inválido)");
+                return;
+            }
+            switch (node.path("type").asText(event.event() == null ? "" : event.event())) {
+                case "message_start" -> {
+                    JsonNode message = node.path("message");
+                    model = message.path("model").asText(null);
+                    inputTokens = message.path("usage").path("input_tokens").asInt(0);
+                    outputTokens = message.path("usage").path("output_tokens").asInt(0);
+                }
+                case "content_block_delta" -> {
+                    JsonNode delta = node.path("delta");
+                    if ("text_delta".equals(delta.path("type").asText())) {
+                        String piece = delta.path("text").asText("");
+                        if (!piece.isEmpty()) {
+                            text.append(piece);
+                            listener.onDelta(piece);
+                        }
+                    }
+                }
+                case "message_delta" -> {
+                    stopReason = node.path("delta").path("stop_reason").asText(stopReason);
+                    if (node.path("usage").has("output_tokens")) {
+                        outputTokens = node.path("usage").path("output_tokens").asInt(outputTokens);
+                    }
+                }
+                case "message_stop" -> stopped = true;
+                case "error" -> throw new IllegalStateException("Claude API falhou no streaming: "
+                        + node.path("error").path("type").asText("") + " - " + node.path("error").path("message").asText("sem detalhes"));
+                default -> { /* ping, content_block_start/stop: ignorados */ }
+            }
+        }
+    }
+
+    private Map<String, String> apiHeaders(String key, String effectiveModel) {
+        Map<String, String> headers = new HashMap<>();
+        headers.put("x-api-key", key);
+        headers.put("anthropic-version", "2023-06-01");
+        if (supportsServerSideFallback(effectiveModel)) {
+            headers.put("anthropic-beta", "server-side-fallback-2026-07-01");
+        }
+        return headers;
+    }
+
+    private static Map<String, Object> buildBody(LLMRequest request, String effectiveModel) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("model", effectiveModel);
+        body.put("max_tokens", resolveMaxTokens(request, effectiveModel));
+        // Modelos Claude atuais (geração 4.7+/5.x) rejeitam temperature/top_p/top_k com HTTP 400.
+        if (acceptsSamplingParams(effectiveModel)) {
+            body.put("temperature", request.getTemperature() != null ? request.getTemperature() : 0.2);
+        }
+        // Fallback no servidor: se o modelo recusar a resposta por política, a API reexecuta no modelo de apoio.
+        if (supportsServerSideFallback(effectiveModel)) {
+            body.put("fallbacks", "default");
+        }
+        if (request.getSystemPrompt() != null && !request.getSystemPrompt().isBlank()) {
+            body.put("system", request.getSystemPrompt());
+        }
+        List<Map<String, String>> messages = new ArrayList<>();
+        messages.add(Map.of("role", "user", "content", request.getUserPrompt()));
+        body.put("messages", messages);
+        return body;
     }
 
     /** Modelos anteriores à geração 4.7 ainda aceitam temperature; os atuais retornam 400. */

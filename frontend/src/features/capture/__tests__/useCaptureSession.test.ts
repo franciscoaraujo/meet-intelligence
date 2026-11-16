@@ -74,6 +74,110 @@ describe('useCaptureSession', () => {
     expect(hook.result.current.mic.state).toBe('ATIVA_SILENCIO');
   });
 
+  it('spec 008 RF-18: speaking da aba acompanha o VAD (fala aberta) e volta a false no silêncio', async () => {
+    const { hook, env } = setup();
+    await act(() => hook.result.current.startRecording());
+    await act(() => hook.result.current.startTab());
+    expect(hook.result.current.tab.speaking).toBe(false);
+
+    await act(async () => {
+      for (let i = 0; i < 25; i++) env.contexts[1].port.emit(speechFrame());
+    });
+    expect(hook.result.current.tab.speaking).toBe(true);
+    expect(hook.result.current.mic.speaking).toBe(false);
+
+    await act(async () => {
+      for (let i = 0; i < 1300 / 20; i++) env.contexts[1].port.emit(silenceFrame());
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(hook.result.current.tab.speaking).toBe(false);
+  });
+
+  it('spec 008 RF-20: microfone desligado não abre o microfone; só o áudio do computador é capturado', async () => {
+    const { hook, env, speak, sent } = setup();
+    await act(() => hook.result.current.setMicMode('OFF'));
+    await act(() => hook.result.current.startRecording());
+    await act(() => hook.result.current.startTab());
+
+    expect(env.getUserMedia).not.toHaveBeenCalled();
+    expect(hook.result.current.mic.state).toBe('INATIVA');
+    await act(async () => {
+      speak(0, 800); // único contexto de áudio = computador
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(sent.map((p) => p.audioSource)).toEqual(['TAB']);
+  });
+
+  it('spec 008 RF-20: trocar para desligado durante a captura fecha só o microfone; voltar religa', async () => {
+    const { hook, env } = setup();
+    await act(() => hook.result.current.startRecording());
+    await act(() => hook.result.current.startTab());
+    expect(hook.result.current.mic.state).toBe('ATIVA_SILENCIO');
+
+    await act(() => hook.result.current.setMicMode('OFF'));
+    expect(hook.result.current.mic.state).toBe('INATIVA');
+    expect(env.streams[0].tracks.every((t) => t.readyState === 'ended')).toBe(true); // trilha do microfone
+    expect(hook.result.current.tab.state).toBe('ATIVA_SILENCIO');
+    expect(hook.result.current.isRecording).toBe(true);
+
+    await act(() => hook.result.current.setMicMode('BACKEND'));
+    expect(env.getUserMedia).toHaveBeenCalledTimes(2);
+    expect(hook.result.current.mic.state).toBe('ATIVA_SILENCIO');
+  });
+
+  describe('spec 008 RF-20: microfone bloqueado no modo entrevista', () => {
+    const setupBlocked = (initialBlocked: boolean) => {
+      const env = createFakeMediaEnv();
+      const hook = renderHook(
+        ({ blocked }) =>
+          useCaptureSession({
+            sendChunk: vi.fn(async () => ({ status: 'NO_SPEECH', duplicate: false, segments: [] }) as ChunkTranscriptionResponse),
+            onTranscribed: vi.fn(),
+            onWebSpeechText: vi.fn(),
+            micSpeakerLabel: () => 'Francisco',
+            depsFactory: () => env.deps,
+            micBlocked: blocked,
+          }),
+        { initialProps: { blocked: initialBlocked } },
+      );
+      return { env, hook };
+    };
+
+    it('bloqueado: iniciar a captura não abre o microfone, nem escolhendo outro modo no seletor', async () => {
+      const { env, hook } = setupBlocked(true);
+      await act(() => hook.result.current.startRecording());
+      await act(() => hook.result.current.setMicMode('BACKEND'));
+      await act(() => hook.result.current.setMicMode('WEB_SPEECH'));
+      await act(() => hook.result.current.startTab());
+
+      expect(env.getUserMedia).not.toHaveBeenCalled();
+      expect(hook.result.current.mic.state).toBe('INATIVA');
+      expect(hook.result.current.tab.state).toBe('ATIVA_SILENCIO');
+    });
+
+    it('entrar no modo entrevista com a captura rodando desliga o microfone na hora; sair religa', async () => {
+      const { env, hook } = setupBlocked(false);
+      await act(() => hook.result.current.startRecording());
+      await act(() => hook.result.current.startTab());
+      expect(hook.result.current.mic.state).toBe('ATIVA_SILENCIO');
+
+      await act(async () => {
+        hook.rerender({ blocked: true });
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(hook.result.current.mic.state).toBe('INATIVA');
+      expect(env.streams[0].tracks.every((t) => t.readyState === 'ended')).toBe(true);
+      expect(hook.result.current.tab.state).toBe('ATIVA_SILENCIO');
+
+      await act(async () => {
+        hook.rerender({ blocked: false });
+        await new Promise((r) => setTimeout(r, 0));
+      });
+      expect(env.getUserMedia).toHaveBeenCalledTimes(2);
+      expect(hook.result.current.mic.state).toBe('ATIVA_SILENCIO');
+    });
+  });
+
   it('CA-06: parar envia a fala em andamento e encerra todas as trilhas', async () => {
     const { hook, env, sent } = setup();
     await act(() => hook.result.current.startRecording());
@@ -134,7 +238,7 @@ describe('useCaptureSession', () => {
       }),
     );
 
-    act(() => hook.result.current.setMicMode('WEB_SPEECH'));
+    await act(() => hook.result.current.setMicMode('WEB_SPEECH'));
     await act(() => hook.result.current.startRecording());
     act(() => recognition!.onresult!({ resultIndex: 0, results: [{ isFinal: false, 0: { transcript: 'pergunta pendente' } }] }));
     await act(() => hook.result.current.stopRecording());

@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetingintelligence.application.service.ai.KnowledgeBaseService;
 import com.meetingintelligence.domain.ai.LLMRequest;
 import com.meetingintelligence.domain.ai.LLMResponse;
+import com.meetingintelligence.domain.ai.LlmStreamAbortedException;
 import com.meetingintelligence.domain.copilot.CopilotAnswer;
 import com.meetingintelligence.domain.copilot.CopilotAnswerValidator;
 import com.meetingintelligence.domain.entity.AIInsight;
@@ -11,6 +12,7 @@ import com.meetingintelligence.domain.entity.InterviewQuestion;
 import com.meetingintelligence.domain.entity.Meeting;
 import com.meetingintelligence.domain.entity.MeetingSummary;
 import com.meetingintelligence.domain.enums.InsightCategory;
+import com.meetingintelligence.domain.question.UtteranceType;
 import com.meetingintelligence.infrastructure.ai.AIOrchestrator;
 import com.meetingintelligence.infrastructure.ai.GrokLlmProvider;
 import com.meetingintelligence.infrastructure.persistence.repository.AIInsightRepository;
@@ -42,8 +44,10 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class InterviewCopilotService implements InterviewCopilot {
 
-    static final String OPERATION = "INTERVIEW_ANSWER";
+    static final String OPERATION = AIOrchestrator.INTERVIEW_ANSWER;
     static final int MAX_ATTEMPTS = 2;
+    /** No máximo um evento DELTA a cada 100 ms por pergunta (spec 008, RNF-03). */
+    static final long DELTA_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(100);
 
     private final InterviewQuestionRepository questions;
     private final MeetingRepository meetings;
@@ -57,6 +61,7 @@ public class InterviewCopilotService implements InterviewCopilot {
     private final SimpMessagingTemplate messaging;
     private final ObjectMapper objectMapper;
     private final MeterRegistry meters;
+    private final CopilotStreamPublisher streams;
 
     @Async
     @Override
@@ -80,34 +85,73 @@ public class InterviewCopilotService implements InterviewCopilot {
             String summary = summaries.findByMeetingId(meeting.getId()).map(MeetingSummary::getExecutiveSummary).orElse("");
             var recent = segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meeting.getId());
 
+            CopilotStreamPublisher.Session events = streams.open(meeting.getId(), question.getId());
+            // "Pergunta terminou": o candidato confirmou que houve pergunta; o modelo não pode descartá-la
+            boolean manual = question.getUtteranceType() == UtteranceType.MANUAL_TRIGGER;
             String correction = null;
+            String lastFailure = "VALIDATION_FAILED";
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
                 LLMRequest request = LLMRequest.builder()
                         .systemPrompt(prompts.systemPrompt())
                         .userPrompt(prompts.userPrompt(question.getQuestionText(), question.getUtteranceType().name(),
-                                question.getScore().doubleValue(), recent, meeting.getUserInterviewRole(), summary, kb, correction))
+                                question.getScore().doubleValue(), recent, meeting.getUserInterviewRole(), summary, kb, correction,
+                                manual, meeting.getLanguage()))
                         .maxTokens(2048)
                         .jsonMode(true)
                         .build();
 
+                // Streaming (spec 008): só o texto da spoken_answer vai para a UI, agrupado a cada 100 ms
+                events.started(attempt);
+                long attemptStart = System.nanoTime();
+                SpokenAnswerExtractor extractor = new SpokenAnswerExtractor();
+                DeltaThrottler throttler = new DeltaThrottler(DELTA_INTERVAL_NANOS, System::nanoTime, events::delta);
+                int[] deltas = {0};
+                long[] firstTextAt = {0};
+
                 LLMResponse response;
                 try {
-                    response = orchestrator.execute(request, meeting, OPERATION);
+                    response = orchestrator.executeStreaming(request, meeting, OPERATION, delta -> {
+                        deltas[0]++;
+                        String text = extractor.feed(delta);
+                        if (!text.isEmpty()) {
+                            if (firstTextAt[0] == 0) firstTextAt[0] = System.nanoTime();
+                            throttler.offer(text);
+                        }
+                    });
+                } catch (LlmStreamAbortedException e) {
+                    throttler.discard();
+                    events.rejected("STREAM_ABORTED");
+                    lastFailure = "STREAM_ABORTED";
+                    log.info("Copiloto: streaming interrompido na tentativa {}", attempt);
+                    continue;
                 } catch (RuntimeException e) {
+                    events.failed("LLM_UNAVAILABLE");
                     fail(question, "LLM_UNAVAILABLE");
                     return;
                 }
+                throttler.flush();
+                recordStreamMetrics(response, attempt, attemptStart, firstTextAt[0], deltas[0], extractor);
 
                 CopilotAnswer answer;
                 try {
                     answer = objectMapper.readValue(GrokLlmProvider.stripMarkdownFences(response.getContent()), CopilotAnswer.class);
                 } catch (Exception e) {
                     correction = "o conteúdo não era um JSON válido no formato pedido";
+                    lastFailure = "PARSE_ERROR";
                     meters.counter("copilot.validation.rejected", "rule", "PARSE_ERROR").increment();
+                    events.rejected("PARSE_ERROR");
                     continue;
                 }
 
+                if (!answer.questionForCandidate() && manual) {
+                    correction = "o candidato confirmou que a pergunta terminou; identifique a última pergunta do trecho, "
+                            + "preencha \"question\" e responda com is_question_for_candidate true";
+                    lastFailure = "NOT_A_QUESTION";
+                    events.rejected("VALIDATION");
+                    continue;
+                }
                 if (!answer.questionForCandidate()) {
+                    events.failed("NOT_A_QUESTION");
                     updateStatus(question, InterviewQuestion.Status.DISMISSED, "NOT_A_QUESTION");
                     meters.counter("copilot.outcome", "status", "DISMISSED").increment();
                     log.info("Copiloto: o modelo indicou que não era pergunta ao candidato");
@@ -117,25 +161,52 @@ public class InterviewCopilotService implements InterviewCopilot {
                 List<String> problems = CopilotAnswerValidator.validate(answer, question.getQuestionText(), kb);
                 if (!problems.isEmpty()) {
                     correction = String.join("; ", problems);
+                    lastFailure = "VALIDATION_FAILED";
                     problems.forEach(p -> meters.counter("copilot.validation.rejected", "rule", ruleOf(p)).increment());
+                    events.rejected("VALIDATION");
                     log.info("Copiloto: resposta rejeitada na tentativa {}: {}", attempt, problems.size());
                     continue;
                 }
 
-                publishAnswer(meeting, question, answer, response);
+                if (manual && answer.interpretedQuestion() != null && !answer.interpretedQuestion().isBlank()) {
+                    // O título do card passa a ser a pergunta entendida, não o trecho inteiro com comentários
+                    question.setQuestionText(answer.interpretedQuestion().trim());
+                }
+                AIInsight saved = publishAnswer(meeting, question, answer, response);
+                events.completed(saved.getId());
                 meters.counter("copilot.outcome", "status", "ANSWERED").increment();
                 Timer.builder("copilot.latency").tag("provider", String.valueOf(response.getProviderName()))
+                        .tag("model", String.valueOf(response.getModelName()))
                         .register(meters).record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
                 return;
             }
-            fail(question, correction != null && correction.contains("JSON") ? "PARSE_ERROR" : "VALIDATION_FAILED");
+            events.failed(lastFailure);
+            fail(question, lastFailure);
         } finally {
             MDC.remove("meetingId");
             MDC.remove("questionId");
         }
     }
 
-    private void publishAnswer(Meeting meeting, InterviewQuestion question, CopilotAnswer answer, LLMResponse response) {
+    /** Tempo até o primeiro texto (RNF-01) e um log por tentativa, sem o conteúdo da resposta. */
+    private void recordStreamMetrics(LLMResponse response, int attempt, long attemptStart, long firstTextAt, int deltas,
+                                     SpokenAnswerExtractor extractor) {
+        String provider = String.valueOf(response.getProviderName());
+        String model = String.valueOf(response.getModelName());
+        long ttftMs = firstTextAt == 0 ? -1 : TimeUnit.NANOSECONDS.toMillis(firstTextAt - attemptStart);
+        if (firstTextAt != 0) {
+            Timer.builder("copilot.ttft").tag("provider", provider).tag("model", model)
+                    .register(meters).record(firstTextAt - attemptStart, TimeUnit.NANOSECONDS);
+        } else {
+            // O modelo não escreveu spoken_answer (ou não era pergunta): nada foi mostrado durante a geração
+            meters.counter("copilot.stream.no_spoken_first", "provider", provider).increment();
+        }
+        log.info("Copiloto: tentativa={} provedor={} modelo={} ttft_ms={} total_ms={} deltas={} spoken_completo={}",
+                attempt, provider, model, ttftMs, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - attemptStart),
+                deltas, extractor.finished());
+    }
+
+    private AIInsight publishAnswer(Meeting meeting, InterviewQuestion question, CopilotAnswer answer, LLMResponse response) {
         String metadata;
         try {
             metadata = objectMapper.writeValueAsString(java.util.Map.of(
@@ -177,6 +248,7 @@ public class InterviewCopilotService implements InterviewCopilot {
         }
         log.info("Copiloto respondeu: versão={} simulado={} provedor={}", question.getAnswerVersion(),
                 answer.simulated(), response.getProviderName());
+        return saved;
     }
 
     private void fail(InterviewQuestion question, String reason) {

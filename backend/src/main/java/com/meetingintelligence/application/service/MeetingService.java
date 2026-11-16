@@ -61,7 +61,9 @@ public class MeetingService {
                 .description(request.getDescription())
                 .scheduledStart(request.getScheduledStart())
                 .scheduledEnd(request.getScheduledEnd())
-                .googleMeetLink(request.getGoogleMeetLink())
+                // Spec 010: captura avulsa não tem link; texto em branco é gravado como ausente
+                .googleMeetLink(request.getGoogleMeetLink() == null || request.getGoogleMeetLink().isBlank()
+                        ? null : request.getGoogleMeetLink().trim())
                 .googleCalendarEventId(request.getGoogleCalendarEventId())
                 .captureMechanism(request.getCaptureMechanism())
                 .language(request.getLanguage() != null ? request.getLanguage() : "pt-BR")
@@ -136,6 +138,18 @@ public class MeetingService {
                 .orElseThrow(() -> new com.meetingintelligence.application.exception.ResourceNotFoundException(
                         "Reunião não encontrada: " + meetingId));
         meeting.setUserInterviewRole(role);
+        return mapToResponse(meetingRepository.save(meeting));
+    }
+
+    /** Idioma da entrevista (spec 011): transcrição, detecção de perguntas e respostas do copiloto. */
+    @Transactional
+    public MeetingResponse updateLanguage(UUID meetingId, UUID organizationId, String language) {
+        var parsed = com.meetingintelligence.domain.language.InterviewLanguage.parseStrict(language);
+        Meeting meeting = meetingRepository.findById(meetingId)
+                .filter(m -> m.getOrganization() != null && m.getOrganization().getId().equals(organizationId))
+                .orElseThrow(() -> new com.meetingintelligence.application.exception.ResourceNotFoundException(
+                        "Reunião não encontrada: " + meetingId));
+        meeting.setLanguage(parsed.tag());
         return mapToResponse(meetingRepository.save(meeting));
     }
 

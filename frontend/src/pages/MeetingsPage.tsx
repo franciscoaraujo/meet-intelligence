@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { isQuickCapture } from '../features/meetings/quickCapture';
 import { useNavigate } from 'react-router-dom';
 import { Plus, ArrowRight, Search, Trash2, Video } from 'lucide-react';
 import { api } from '../services/api';
@@ -130,7 +131,7 @@ export const MeetingsPage: React.FC = () => {
           </div>
           <h3 className="text-base font-medium text-[#1f1f1f]">Nenhuma reunião encontrada</h3>
           <p className="text-xs text-[#444746] max-w-md mx-auto">
-            Inicie uma nova captura de reunião ou sincronize sua agenda do Google Meet no painel principal.
+            Clique em "Nova captura" para capturar qualquer áudio do computador (WhatsApp, YouTube, Meet…) ou sincronize sua agenda do Google Meet no painel principal.
           </p>
         </div>
       ) : (
@@ -180,6 +181,11 @@ export const MeetingsPage: React.FC = () => {
                 <h3 className="text-base font-medium text-[#1f1f1f] group-hover:text-[#0b57d0] transition-colors line-clamp-2">
                   {m.title}
                 </h3>
+                {isQuickCapture(m) && (
+                  <span className="inline-block mt-1.5 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#e8f0fe] text-[#0b57d0]" data-testid="quick-capture-chip">
+                    Captura avulsa
+                  </span>
+                )}
                 {m.description && (
                   <p className="text-xs text-[#444746] mt-1.5 line-clamp-2">{stripHtml(m.description)}</p>
                 )}

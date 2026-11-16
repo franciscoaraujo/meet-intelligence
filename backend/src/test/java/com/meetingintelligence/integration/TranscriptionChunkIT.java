@@ -130,7 +130,7 @@ class TranscriptionChunkIT extends AbstractPostgresIT {
                 .andExpect(jsonPath("$.segments[0].audioSource").value("TAB"))
                 .andExpect(jsonPath("$.segments[0].captureStartMs").value(120000))
                 .andExpect(jsonPath("$.segments[0].speakerRole").value("REMOTE"))
-                .andExpect(jsonPath("$.segments[0].speakerLabel").value("Participante remoto (Meet)"));
+                .andExpect(jsonPath("$.segments[0].speakerLabel").value("Participante remoto"));
 
         mvc.perform(post("/api/v1/meetings/{id}/transcripts/chunk", meetingId)
                         .with(authentication(userOf(orgId)))

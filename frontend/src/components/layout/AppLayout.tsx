@@ -15,6 +15,7 @@ import {
   BookMarked,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { QuickCaptureButton } from '../meetings/QuickCaptureButton';
 
 export const AppLayout: React.FC = () => {
   const { user, logout } = useAuth();
@@ -36,7 +37,7 @@ export const AppLayout: React.FC = () => {
   const navItems = [
     { label: 'Visão Geral', path: '/', icon: LayoutDashboard },
     { label: 'Agenda Sincronizada', path: '/calendar', icon: Calendar },
-    { label: 'Reuniões Google Meet', path: '/meetings', icon: Video },
+    { label: 'Reuniões e capturas', path: '/meetings', icon: Video },
     { label: 'Atas e Relatórios', path: '/summaries', icon: ClipboardList },
     { label: 'Perfis de Análise', path: '/ai-profiles', icon: Sliders },
     { label: 'Base de Conhecimento', path: '/knowledge', icon: BookMarked },
@@ -118,6 +119,8 @@ export const AppLayout: React.FC = () => {
         {/* Material 3 Navigation Drawer */}
         <aside className="w-64 px-3 py-2 flex flex-col justify-between shrink-0 bg-[#f8fafd]">
           <nav className="space-y-1">
+            {/* Spec 010: sala de captura sem Google Meet, em um clique */}
+            <QuickCaptureButton variant="sidebar" />
             {navItems.map((item) => {
               const Icon = item.icon;
               return (

@@ -96,15 +96,19 @@ app:
     gemini:
       api-key: ${GEMINI_API_KEY:mock-key}
       model: ${GEMINI_MODEL:gemini-3.5-flash-lite}
+      # Modelo só do copiloto de entrevistas (spec 008, RF-09). Vazio = mesmo modelo da organização/servidor.
+      copilot-model: ${GEMINI_COPILOT_MODEL:}
     # OpenAI: usada só para transcrição de gravações (gpt-transcribe) e embeddings da busca semântica
     openai:
       api-key: ${OPENAI_API_KEY:mock-key}
     grok:
       api-key: ${XAI_API_KEY:mock-key}
       model: ${GROK_MODEL:grok-4.7}
+      copilot-model: ${GROK_COPILOT_MODEL:}
     claude:
       api-key: ${ANTHROPIC_API_KEY:mock-key}
       model: ${CLAUDE_MODEL:claude-opus-5-5}
+      copilot-model: ${CLAUDE_COPILOT_MODEL:}
     deepgram:
       api-key: ${DEEPGRAM_API_KEY:mock-key}
 

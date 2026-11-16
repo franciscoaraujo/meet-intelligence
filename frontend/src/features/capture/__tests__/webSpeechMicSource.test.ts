@@ -96,4 +96,27 @@ describe('WebSpeechMicSource (modo alternativo)', () => {
     expect(pending).toBe('pergunta sem pausa');
     expect(rec.starts).toBe(1);
   });
+
+  it('spec 008 CA-10: o texto provisório só vai para a tela; ao consolidar, some e a frase é enviada uma vez', () => {
+    const rec = new FakeRecognition();
+    const timers: Array<() => void> = [];
+    const interims: string[] = [];
+    const finals: string[] = [];
+    const source = new WebSpeechMicSource(
+      { onState: () => {}, onInterim: (t) => interims.push(t), onFinalText: (t) => finals.push(t) },
+      { createRecognition: () => rec, setTimer: (fn) => timers.push(fn), clearTimer: () => {}, now: () => 0 },
+    );
+    source.start();
+
+    rec.say('eu trabalhei', false);
+    rec.say('eu trabalhei com', false);
+    expect(interims).toEqual(['eu trabalhei', 'eu trabalhei com']);
+    expect(finals).toEqual([]);
+
+    rec.say('eu trabalhei com Kafka', true);
+    timers.splice(0).forEach((fn) => fn());
+
+    expect(finals).toEqual(['eu trabalhei com Kafka']);
+    expect(interims[interims.length - 1]).toBe('');
+  });
 });

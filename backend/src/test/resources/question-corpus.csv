@@ -44,6 +44,19 @@ vamos para a próxima parte da entrevista|REMOTE|NOT_QUESTION
 bom dia, tudo bem|REMOTE|NOT_QUESTION
 perfeito, obrigado pela resposta|REMOTE|NOT_QUESTION
 a API REST é chamada pelo front|REMOTE|NOT_QUESTION
+# Entrevista real de 2026-11-15 (21:55-22:01): pergunta no meio da fala, depois de um comentário ou anúncio
+Claro se você fosse criar um módulo de geração de guias dentro do contexto da contabilizei pensando em microsserviços e eventos como você imaginaria essa separação de responsabilidades|REMOTE|QUESTION
+boa ficou coerente e bem alinhado com eventos de separação de responsabilidades agora como você lidaria com observabilidade tipo quais métricas logs estressem você colocaria|REMOTE|QUESTION
+muito bom ficou bem completo e mostrou cuidado com o médico se realmente importa em produção última pergunta dessa rodada como você usaria agente de a no dia a dia de desenvolvimento desse módulo|REMOTE|QUESTION
+Claro a pergunta é como você usaria agente de a no seu dia a dia de desenvolvimento desse modo sem abrir mão de segurança e qualidade|REMOTE|QUESTION
+é a geração de dias e também para investigar problemas em produção|REMOTE|NOT_QUESTION
+# Variações escritas para o mesmo padrão (comentário + pergunta) e armadilhas que não são perguntas
+legal e nesse cenário como você escolheria entre Kafka e RabbitMQ|REMOTE|QUESTION
+perfeito próxima pergunta qual banco você usaria para esse módulo|REMOTE|QUESTION
+como você pode ver aqui a gente usa Kafka nos pagamentos|REMOTE|NOT_QUESTION
+como você mencionou o outbox resolve a consistência|REMOTE|NOT_QUESTION
+muito bom ficou bem completo e mostrou cuidado com produção|REMOTE|NOT_QUESTION
+essa foi a última pergunta da rodada obrigado|REMOTE|NOT_QUESTION
 # Falas do candidato (nunca respondidas pelo copiloto)
 Então, o SOLID é um conjunto de cinco princípios|SELF|NOT_QUESTION
 Qual seria o volume de mensagens por segundo?|SELF|NOT_QUESTION

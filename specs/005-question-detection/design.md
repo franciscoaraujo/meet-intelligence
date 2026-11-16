@@ -92,3 +92,28 @@ A pontuação é limitada a 1,0. O tipo vem do sinal dominante: "?" ou interroga
 | `flushRemaining` refazia os últimos 10 segmentos quando não havia bloco pendente | Removido | Reanalisava conteúdo já analisado e duplicava insights (P-11) |
 | — | IA e indexação do bloco disparadas só após o commit (`AfterCommit`) | A análise roda em outra thread e o insight referencia o bloco (FK `chunk_id`, V9) |
 | Copiloto chamado pela interface | `InterviewCopilot` + `PendingInterviewCopilot` provisório | A implementação real é a spec 004 |
+
+## Correção após uso real (2026-11-15, 22:05)
+Na primeira entrevista real, duas perguntas não viraram card (e outras duas só passaram pelo botão manual): o entrevistador fazia um comentário ou anúncio antes da pergunta ("muito bom, ficou completo... última pergunta dessa rodada: como você usaria...", "a pergunta é como você usaria...") e a transcrição não põe "?". O classificador só reconhecia o interrogativo no começo da fala.
+
+| Mudança | Detalhe |
+|---|---|
+| Pergunta no meio da fala | `EMBEDDED_QUESTION`: interrogativo + "você" + verbo no condicional (usaria, lidaria, imaginaria, escolheria) a até 3 palavras, em qualquer posição. Sinal "pergunta no meio da fala" |
+| Falsas perguntas | `FALSE_INTERROGATIVE` passa a cobrir "como você pode ver / viu / mencionou / disse / falou / sabe" (eram falsos positivos não cobertos pelo corpus) |
+| Corpus | +11 frases: 4 perguntas reais da entrevista, 1 comentário real, 2 variações e 4 armadilhas. Resultado: 33/33 perguntas (100%), 0/20 falsos positivos (antes: 27/27 e 0/15 num corpus sem esse padrão) |
+| Limitação | Perguntas no meio da fala sem verbo no condicional ("o que você achou de...", "qual foi o maior desafio") ainda dependem do começo da fala ou do botão "Responder última pergunta" |
+
+## Botão "Pergunta terminou" (RF-09 revisto em 2026-11-15, 22:15)
+Uso real: "Responder última pergunta" juntava as 3 últimas falas remotas (no caso, um comentário + o começo da pergunta seguinte), e o modelo respondia "não era pergunta"; a pergunta era descartada e o card sumia. Os 8 cliques da sessão falharam assim.
+
+| Mudança | Detalhe |
+|---|---|
+| Significado do botão | Renomeado para **"Pergunta terminou"**: o candidato sinaliza que o entrevistador acabou de perguntar. No modo entrevista, também aparece ao lado de "Pergunta atual" |
+| Texto enviado | Toda a fala remota (sem eco) desde a última pergunta não descartada, limitada a 120 s e 10 trechos, mais o enunciado em aberto. Cliques descartados não contam como limite |
+| Tipo | `UtteranceType.MANUAL_TRIGGER` (coluna VARCHAR, sem migration) |
+| Copiloto | O prompt recebe `<manual_trigger>`: o trecho pode ter comentários antes; o modelo identifica a última pergunta, devolve-a em `question` e responde. Se disser que não é pergunta, nova tentativa com correção; se insistir, a pergunta fica `FAILED` (com "Tentar novamente"), nunca `DISMISSED` |
+| Título do card | Passa a ser a pergunta entendida pelo modelo (`question`), não o trecho inteiro |
+| Retorno visual | "Enviando pergunta…" até a pergunta chegar pelo WebSocket (máx. 8 s); cliques repetidos ignorados enquanto isso |
+| Concorrência | Pergunta já em `ANSWERING` não dispara uma segunda geração (vale também para a deduplicação automática) |
+| Testes | `QuestionDetectionServiceTest` (+3), `InterviewCopilotServiceTest` (+2), `live.test.tsx` |
+

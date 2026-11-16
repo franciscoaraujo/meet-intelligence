@@ -31,7 +31,7 @@ import java.util.UUID;
 @Slf4j
 public class SpeakerAttributionService {
 
-    public static final String REMOTE_LABEL = "Participante remoto (Meet)";
+    public static final String REMOTE_LABEL = "Participante remoto";
     public static final String UNKNOWN_LABEL = "Desconhecido";
     public static final String SELF_FALLBACK_LABEL = "Você";
     static final double MIN_DIARIZATION_CONFIDENCE = 0.5;

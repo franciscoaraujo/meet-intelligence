@@ -21,7 +21,13 @@ public final class TextRelevance {
             "you", "your", "pode", "fale", "explique", "conte", "nao", "sim", "muito",
             "tambem", "faria", "faz", "fazer", "projetaria", "projetar", "usaria", "usar",
             "garante", "garantir", "trabalha", "trabalhou", "experiencia", "this", "that",
-            "are", "can", "will", "from", "into", "funciona"
+            "are", "can", "will", "from", "into", "funciona",
+            // Spec 011: palavras de função em inglês e francês (deduplicação de perguntas nesses idiomas)
+            "would", "could", "should", "does", "did", "have", "has", "about", "which", "why", "when", "where",
+            "who", "tell", "explain", "describe", "there", "they", "them", "then", "than", "been", "were",
+            "vous", "pour", "avec", "dans", "est", "une", "des", "les", "aux", "sur", "pas", "plus", "comment",
+            "quel", "quelle", "quels", "quelles", "pourquoi", "votre", "vos", "cette", "ces", "sont", "fait",
+            "faire", "expliquez", "parlez"
     );
 
     /** Termos PT → equivalentes EN comuns em material técnico (já sem acento). */
