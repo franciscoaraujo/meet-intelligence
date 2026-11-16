@@ -36,6 +36,7 @@ export const InterviewAnswerCard: React.FC<Props> = ({
   question, insight, draft, variant = 'normal', onRegenerate, onDismiss, onJump, onTranslate, formatMs,
 }) => {
   const [copied, setCopied] = useState(false);
+  const [contextOpen, setContextOpen] = useState(false);
   const meta = parseCopilotMetadata(insight?.metadata);
   const questionId = question?.id ?? insight?.questionId;
   const originalTitle = question?.questionText ?? insight?.title?.replace(/^❓\s*/, '') ?? '';
@@ -83,7 +84,8 @@ export const InterviewAnswerCard: React.FC<Props> = ({
     }
   };
 
-  const title = shown?.question || originalTitle;
+  // Spec 015: a pergunta completa escrita pelo copiloto (com o cenário) vira o título
+  const title = shown?.question || meta?.answer.question || originalTitle;
   const spoken = shown?.spokenAnswer || originalSpoken;
   const focus = variant === 'focus';
   const timeMs = question?.captureStartMs ?? insight?.startTimeMs;
@@ -184,6 +186,21 @@ export const InterviewAnswerCard: React.FC<Props> = ({
       )}
 
       <h3 className="text-[13px] font-semibold leading-snug text-[#202124]">{title}</h3>
+      {question?.contextText && (
+        <button
+          type="button"
+          onClick={() => setContextOpen((v) => !v)}
+          aria-expanded={contextOpen}
+          title={contextOpen ? 'Recolher o contexto' : 'Ver o contexto inteiro'}
+          className="block w-full text-left text-[11px] leading-snug text-[#5f6368] cursor-pointer hover:text-[#3c4043]"
+          data-testid="question-context"
+        >
+          <span className={`block ${contextOpen ? '' : 'line-clamp-2'}`}>
+            <span className="font-semibold text-[#444746]">Contexto: </span>
+            {question.contextText}
+          </span>
+        </button>
+      )}
 
       {streaming && !spoken && (
         <div className="bg-white border border-[#d3e3fd] rounded-xl p-3 space-y-2" aria-hidden="true" data-testid="answer-skeleton">

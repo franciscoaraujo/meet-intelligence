@@ -18,6 +18,7 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 | [012](012-card-translation/spec.md) | Botão "Traduzir" no card do copiloto | P2 | **Implementada** (167 backend + 101 frontend) |
 | [013](013-clean-live-ui/spec.md) | Interface limpa da sala ao vivo | P3 | **Implementada** (105 frontend; revisão visual pendente) |
 | [014](014-answer-style/spec.md) | Estilo das respostas: padrão, informal, formal, técnica | P2 | **Implementada** (170 backend + 108 frontend) |
+| [015](015-question-context/spec.md) | Contexto da pergunta: o cenário dito antes acompanha a pergunta | P1 | **Implementada** (180 backend + 114 frontend; falta entrevista real) |
 
 ## Ordem de implementação proposta
 Cada etapa só começa com a anterior verde (testes passando e critérios de aceite atendidos).

@@ -72,7 +72,10 @@ public class AnswerTranslationService {
 
         Meeting meeting = meetings.findById(meetingId)
                 .orElseThrow(() -> new ResourceNotFoundException("Reunião não encontrada: " + meetingId));
-        Translation translation = callModel(target, question.getQuestionText(), answer, meeting);
+        // Spec 015: traduz a pergunta completa escrita pelo copiloto, quando houver
+        String fullQuestion = answer.path("question").asText("");
+        Translation translation = callModel(target, fullQuestion.isBlank() ? question.getQuestionText() : fullQuestion,
+                answer, meeting);
 
         ObjectNode translations = metadata.has("translations") && metadata.get("translations").isObject()
                 ? (ObjectNode) metadata.get("translations") : metadata.putObject("translations");

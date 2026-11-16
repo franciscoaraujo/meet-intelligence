@@ -45,4 +45,14 @@ class MigrationsIT extends AbstractPostgresIT {
         assertThat(columnDefault).contains("NEUTRAL");
         assertThat(nullable).isEqualTo("NO");
     }
+
+    @Test
+    @DisplayName("Spec 015 CA-06: interview_questions.context_text existe e é opcional")
+    void questionContextColumnIsOptional() {
+        String nullable = jdbc.queryForObject(
+                "select is_nullable from information_schema.columns where table_name = 'interview_questions' and column_name = 'context_text'",
+                String.class);
+
+        assertThat(nullable).isEqualTo("YES");
+    }
 }

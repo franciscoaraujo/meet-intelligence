@@ -285,6 +285,43 @@ class InterviewCopilotServiceTest {
     }
 
     @Test
+    @DisplayName("Spec 015 CA-04: o cenário vai para o prompt e para a busca na base; o título vira a pergunta completa")
+    void questionContextReachesPromptAndKnowledgeBase() {
+        String scenario = "aqui temos um sistema de pagamentos com microsserviços e às vezes o saldo fica diferente entre eles";
+        question.setQuestionText("Como você resolveria isso?");
+        question.setContextText(scenario);
+        String full = "Como você garantiria consistência de saldo entre microsserviços de pagamento?";
+        streamResponses(VALID_JSON.replaceFirst("\\{", "{\"question\": \"" + full + "\", "));
+        ArgumentCaptor<LLMRequest> req = ArgumentCaptor.forClass(LLMRequest.class);
+
+        service.answerNow(question.getId());
+
+        verify(orchestrator).executeStreaming(req.capture(), any(), any(), any());
+        assertThat(req.getValue().getUserPrompt()).contains("<question_context>\n" + scenario).contains("<context_instruction>");
+        verify(knowledgeBase).buildContext(any(), eq(scenario + " Como você resolveria isso?"));
+        assertThat(question.getStatus()).isEqualTo(InterviewQuestion.Status.ANSWERED);
+        // o que foi falado continua guardado para a deduplicação (RN-03); o card mostra a pergunta completa
+        assertThat(question.getQuestionText()).isEqualTo("Como você resolveria isso?");
+        assertThat(savedInsights.get(0).getTitle()).isEqualTo("❓ " + full);
+    }
+
+    @Test
+    @DisplayName("Spec 015 RF-03: pergunta curta com cenário técnico exige as seções técnicas")
+    void technicalScenarioRequiresSections() {
+        question.setQuestionText("Como você resolveria isso?");
+        question.setContextText("o consumidor do Kafka processa a mesma mensagem duas vezes");
+        String noSections = VALID_JSON.replaceAll("\"sections\": \\{[^}]*\\}", "\"sections\": {}");
+        streamResponses(noSections, VALID_JSON);
+        ArgumentCaptor<LLMRequest> req = ArgumentCaptor.forClass(LLMRequest.class);
+
+        service.answerNow(question.getId());
+
+        verify(orchestrator, times(2)).executeStreaming(req.capture(), any(), any(), any());
+        assertThat(req.getAllValues().get(1).getUserPrompt()).contains("pergunta técnica sem direct_answer");
+        assertThat(question.getStatus()).isEqualTo(InterviewQuestion.Status.ANSWERED);
+    }
+
+    @Test
     @DisplayName("Pergunta terminou: o modelo não pode descartar; o título vira a pergunta entendida")
     void manualTriggerNeverDismissed() {
         question.setUtteranceType(UtteranceType.MANUAL_TRIGGER);

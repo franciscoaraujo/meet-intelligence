@@ -16,6 +16,8 @@ export interface CopilotAnswer {
   assumptions?: string[] | null;
   confidence?: number | null;
   simulated?: boolean;
+  /** Pergunta completa escrita pelo copiloto (pergunta manual ou com contexto, spec 015). */
+  question?: string | null;
 }
 
 /** Tradução do card (spec 012), gravada em metadata.translations[idioma]. */
