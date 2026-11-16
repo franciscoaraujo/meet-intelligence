@@ -5,6 +5,7 @@ import com.meetingintelligence.domain.entity.TranscriptSegment;
 import com.meetingintelligence.domain.enums.InterviewRole;
 import com.meetingintelligence.domain.language.InterviewLanguage;
 import com.meetingintelligence.domain.question.EchoGuard;
+import com.meetingintelligence.domain.question.FollowUpDetector;
 import com.meetingintelligence.domain.question.QuestionDeduplicator;
 import com.meetingintelligence.domain.question.UtteranceAssembler;
 import com.meetingintelligence.domain.question.UtteranceAssembler.Fragment;
@@ -162,18 +163,23 @@ public class QuestionDetectionService {
 
     private void process(Utterance u, boolean forced) {
         InterviewRole role = interviewRoles.get(u.meetingId());
-        Classification c = UtteranceClassifier.classify(u.text(), u.role(), role,
-                languages.getOrDefault(u.meetingId(), InterviewLanguage.PT_BR));
+        InterviewLanguage language = languages.getOrDefault(u.meetingId(), InterviewLanguage.PT_BR);
+        Classification c = UtteranceClassifier.classify(u.text(), u.role(), role, language);
         meters.counter("questions.classified", "type", c.type().name()).increment();
 
         if (!forced) {
-            if (!c.type().isQuestion()) {
+            boolean question = c.type().isQuestion() && c.score() >= UtteranceClassifier.REVIEW_THRESHOLD;
+            if (!question) {
+                // Spec 016: "e se o Redis cair" sem "?" não parece pergunta, mas pode completar a anterior
+                if (u.role() != SpeakerRole.SELF && FollowUpDetector.startsWithMarker(u.text(), language)) {
+                    List<InterviewQuestion> recent = questions.findTop20ByMeetingIdOrderByCreatedAtDesc(u.meetingId());
+                    if (mergeIntoPrevious(u, c, false, recent, leadIn(u, recent), language)) return;
+                }
                 if (c.type() == UtteranceType.TECHNICAL_DISCUSSION && c.score() >= 0.8) {
                     meters.counter("questions.technical_context").increment();
                 }
                 return;
             }
-            if (c.score() < UtteranceClassifier.REVIEW_THRESHOLD) return;
         }
         UtteranceType type = forced ? UtteranceType.MANUAL_TRIGGER : c.type();
         boolean autoAnswer = forced || c.autoAnswer();
@@ -186,8 +192,15 @@ public class QuestionDetectionService {
                         q.getCreatedAt() != null ? q.getCreatedAt().toInstant().toEpochMilli() : now, q.getContextText()))
                 .toList();
         // Spec 015: a pergunta manual já contém toda a fala desde a anterior (RN-02)
-        String context = forced ? null : leadInContext(u, recent);
+        LeadIn leadIn = forced ? LeadIn.NONE : leadIn(u, recent);
+        String context = leadIn.context();
         QuestionDeduplicator.Decision decision = dedup.decide(u.text(), context, now, candidates);
+
+        // Spec 016: complemento ("e mais uma coisa…") entra no card da pergunta anterior
+        if (decision.kind() == QuestionDeduplicator.Kind.NEW && !forced
+                && mergeIntoPrevious(u, c, true, recent, leadIn, language)) {
+            return;
+        }
 
         if (decision.kind() == QuestionDeduplicator.Kind.NEW) {
             InterviewQuestion q = questions.save(InterviewQuestion.builder()
@@ -225,10 +238,115 @@ public class QuestionDetectionService {
         log.info("Pergunta repetida/continuada: id={} similaridade={} novaResposta={}",
                 saved.getId(), String.format("%.2f", decision.similarity()), reanswer);
         publish(saved);
+        // Spec 016, RN-03: complemento repetido não gera nova resposta
+        if (saved.getStatus() == InterviewQuestion.Status.MERGED) return;
         boolean busy = saved.getStatus() == InterviewQuestion.Status.ANSWERING;
         if (!busy && (reanswer || (forced && saved.getStatus() != InterviewQuestion.Status.ANSWERED))) {
             requestAnswer(saved);
         }
+    }
+
+    /**
+     * Spec 016 (RF-01..RF-03): se a fala completa a última pergunta, grava-a como complemento (MERGED),
+     * soma os trechos à principal e pede a resposta de novo com todas as partes.
+     */
+    private boolean mergeIntoPrevious(Utterance u, Classification c, boolean classifiedAsQuestion,
+                                      List<InterviewQuestion> recent, LeadIn leadIn, InterviewLanguage language) {
+        InterviewQuestion lastPart = recent.stream()
+                .filter(q -> q.getStatus() != InterviewQuestion.Status.DISMISSED && q.getCreatedAt() != null)
+                .findFirst().orElse(null);
+        if (lastPart == null) return false;
+        UUID principalId = lastPart.getStatus() == InterviewQuestion.Status.MERGED && lastPart.getMergedIntoId() != null
+                ? lastPart.getMergedIntoId() : lastPart.getId();
+        InterviewQuestion principal = recent.stream().filter(q -> q.getId().equals(principalId)).findFirst()
+                .orElseGet(() -> questions.findById(principalId).orElse(null));
+        if (principal == null || principal.getStatus() == InterviewQuestion.Status.DISMISSED
+                || principal.getStatus() == InterviewQuestion.Status.MERGED
+                || principal.getUtteranceType() == UtteranceType.MANUAL_TRIGGER) {
+            return false;
+        }
+        List<InterviewQuestion> parts = recent.stream()
+                .filter(q -> q.getStatus() == InterviewQuestion.Status.MERGED && principalId.equals(q.getMergedIntoId()))
+                .toList();
+        StringBuilder known = new StringBuilder(principal.getQuestionText());
+        parts.forEach(p -> known.append(' ').append(p.getQuestionText()));
+        boolean newTopic = QuestionDeduplicator.introducesNewTopic(leadIn.context(),
+                new QuestionDeduplicator.Candidate(principalId, known.toString(), 0, principal.getContextText()));
+        long gapMs = clock.getAsLong() - lastPart.getCreatedAt().toInstant().toEpochMilli();
+
+        boolean followUp = FollowUpDetector.isFollowUp(new FollowUpDetector.Situation(u.text(), language,
+                classifiedAsQuestion, gapMs, 1 + parts.size(), leadIn.candidateSpoke(), newTopic));
+        if (!followUp) return false;
+
+        InterviewQuestion complement = questions.save(InterviewQuestion.builder()
+                .meetingId(u.meetingId())
+                .status(InterviewQuestion.Status.MERGED)
+                .mergedIntoId(principalId)
+                .questionText(u.text())
+                .contextText(leadIn.context())
+                .utteranceType(c.type())
+                .score(BigDecimal.valueOf(c.score()))
+                .autoAnswer(false)
+                .sourceSegmentIds(u.segmentIds().toArray(UUID[]::new))
+                .captureStartMs(u.captureStartMs())
+                .captureEndMs(u.captureEndMs())
+                .build());
+        LinkedHashSet<UUID> ids = new LinkedHashSet<>(Arrays.asList(principal.getSourceSegmentIds()));
+        ids.addAll(u.segmentIds());
+        principal.setSourceSegmentIds(ids.toArray(UUID[]::new));
+        if (u.captureEndMs() != null) principal.setCaptureEndMs(u.captureEndMs());
+        InterviewQuestion savedPrincipal = questions.save(principal);
+        meters.counter("questions.merged").increment();
+        log.info("Complemento juntado: id={} principal={} partes={} gap_ms={}", complement.getId(), principalId,
+                2 + parts.size(), gapMs);
+        publish(complement);
+        publish(savedPrincipal);
+        // RF-03: pontuação intermediária sem resposta automática continua esperando o pedido do usuário
+        boolean waitingForUser = savedPrincipal.getStatus() == InterviewQuestion.Status.DETECTED && !savedPrincipal.isAutoAnswer();
+        if (!waitingForUser) requestAnswer(savedPrincipal);
+        return true;
+    }
+
+    /**
+     * Spec 016, RF-06: "Separar" desfaz a junção. O complemento volta a ser pergunta própria e as duas
+     * são respondidas de novo, cada uma com as suas partes.
+     *
+     * @throws IllegalStateException se a pergunta não for um complemento
+     */
+    public InterviewQuestion split(UUID meetingId, UUID complementId) {
+        InterviewQuestion complement = questions.findById(complementId)
+                .filter(q -> q.getMeetingId().equals(meetingId))
+                .orElseThrow(() -> new IllegalArgumentException("Pergunta não encontrada: " + complementId));
+        if (complement.getStatus() != InterviewQuestion.Status.MERGED || complement.getMergedIntoId() == null) {
+            throw new IllegalStateException("A pergunta não é um complemento");
+        }
+        UUID principalId = complement.getMergedIntoId();
+        complement.setStatus(InterviewQuestion.Status.DETECTED);
+        complement.setMergedIntoId(null);
+        complement.setAutoAnswer(true);
+        InterviewQuestion savedComplement = questions.save(complement);
+
+        InterviewQuestion principal = questions.findById(principalId).orElse(null);
+        if (principal != null) {
+            List<UUID> removed = Arrays.asList(savedComplement.getSourceSegmentIds());
+            UUID[] remaining = Arrays.stream(principal.getSourceSegmentIds()).filter(id -> !removed.contains(id)).toArray(UUID[]::new);
+            principal.setSourceSegmentIds(remaining);
+            Long end = segments.findAllById(Arrays.asList(remaining)).stream()
+                    .map(TranscriptSegment::getCaptureEndMs).filter(java.util.Objects::nonNull)
+                    .max(Long::compare).orElse(principal.getCaptureEndMs());
+            principal.setCaptureEndMs(end);
+            principal = questions.save(principal);
+            publish(principal);
+        }
+        publish(savedComplement);
+        meters.counter("questions.split").increment();
+        log.info("Junção desfeita: complemento={} principal={}", complementId, principalId);
+        requestAnswer(savedComplement);
+        if (principal != null && principal.getStatus() != InterviewQuestion.Status.DISMISSED
+                && !(principal.getStatus() == InterviewQuestion.Status.DETECTED && !principal.isAutoAnswer())) {
+            requestAnswer(principal);
+        }
+        return savedComplement;
     }
 
     private void requestAnswer(InterviewQuestion q) {
@@ -283,7 +401,12 @@ public class QuestionDetectionService {
      * não descartada e da última fala do candidato, nos últimos 90 s, e antes do primeiro trecho da
      * própria pergunta. Mantém o fim (o mais perto da pergunta) dentro dos limites. Nulo se não houver.
      */
-    String leadInContext(Utterance u, List<InterviewQuestion> recent) {
+    /** Contexto antes da pergunta (spec 015) e se o candidato falou desde a última pergunta (spec 016). */
+    record LeadIn(String context, boolean candidateSpoke) {
+        static final LeadIn NONE = new LeadIn(null, false);
+    }
+
+    LeadIn leadIn(Utterance u, List<InterviewQuestion> recent) {
         OffsetDateTime boundary = recent.stream()
                 .filter(q -> q.getStatus() != InterviewQuestion.Status.DISMISSED && q.getCreatedAt() != null)
                 .map(InterviewQuestion::getCreatedAt)
@@ -294,16 +417,21 @@ public class QuestionDetectionService {
 
         List<TranscriptSegment> before = new ArrayList<>();
         boolean reachedQuestion = false;
+        boolean candidateSpoke = false;
         for (TranscriptSegment s : segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(u.meetingId())) {
             if (u.segmentIds().contains(s.getId())) {
                 reachedQuestion = true;
                 break;
             }
             if (s.isEchoSuspected() || s.getCreatedAt() == null || !s.getCreatedAt().isAfter(from)) continue;
-            if (s.getSpeakerRole() == SpeakerRole.SELF) before.clear(); // o candidato falou: o cenário anterior acabou
+            if (s.getSpeakerRole() == SpeakerRole.SELF) {
+                before.clear(); // o candidato falou: o cenário anterior acabou
+                candidateSpoke = true;
+            }
             else if (s.getSpeakerRole() == SpeakerRole.REMOTE) before.add(s);
         }
-        if (!reachedQuestion || before.isEmpty()) return null;
+        if (!reachedQuestion) return LeadIn.NONE;
+        if (before.isEmpty()) return new LeadIn(null, candidateSpoke);
 
         java.util.Deque<String> parts = new java.util.ArrayDeque<>();
         int chars = 0;
@@ -319,7 +447,7 @@ public class QuestionDetectionService {
             parts.addFirst(text);
             chars += text.length() + 1;
         }
-        return parts.isEmpty() ? null : String.join(" ", parts);
+        return new LeadIn(parts.isEmpty() ? null : String.join(" ", parts), candidateSpoke);
     }
 
     private Utterance recentRemoteSpeech(UUID meetingId) {

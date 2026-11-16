@@ -1,6 +1,6 @@
 # Spec 015 — Contexto da pergunta
 
-Prioridade: **P1** · Status: **Implementada (2026-11-16; testes automatizados, falta validar em entrevista real)** · Origem: problema relatado pelo usuário ("o entrevistador dá um contexto e depois faz a pergunta; a pergunta se perde e a resposta sai sem contexto")
+Prioridade: **P1** · Status: **Validada (implementada e validada em entrevista real em 2026-11-16)** · Origem: problema relatado pelo usuário ("o entrevistador dá um contexto e depois faz a pergunta; a pergunta se perde e a resposta sai sem contexto")
 
 ## Problema
 O entrevistador costuma descrever um cenário e só depois perguntar:

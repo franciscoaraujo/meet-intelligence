@@ -4,7 +4,7 @@ import type { AIInsight, InterviewQuestion } from '../../types';
 import { InterviewAnswerCard } from '../copilot/InterviewAnswerCard';
 import type { CopilotDrafts } from '../../features/copilot/copilotStream';
 import type { CopilotTranslation } from '../../features/copilot/copilotAnswer';
-import { visibleQuestions } from '../../features/live/interviewMode';
+import { partsOf, visibleQuestions } from '../../features/live/interviewMode';
 
 interface Props {
   questions: InterviewQuestion[];
@@ -14,6 +14,8 @@ interface Props {
   onJump?: (timeMs: number) => void;
   onRegenerate?: (questionId: string) => void;
   onDismiss?: (questionId: string) => void;
+  /** Spec 016: desfaz a junção dos complementos da pergunta. */
+  onSplit?: (questionId: string) => void;
   onTranslate?: (questionId: string, language: string) => Promise<CopilotTranslation>;
   /** Botão "Pergunta terminou": o candidato sinaliza o fim da pergunta do entrevistador. */
   onAnswerLatest?: () => void;
@@ -26,6 +28,7 @@ const STATUS_CHIP: Record<InterviewQuestion['status'], string> = {
   ANSWERED: 'respondida',
   FAILED: 'falhou',
   DISMISSED: 'descartada',
+  MERGED: 'juntada',
 };
 
 /**
@@ -34,6 +37,7 @@ const STATUS_CHIP: Record<InterviewQuestion['status'], string> = {
  */
 export const InterviewModeLayout: React.FC<Props> = ({
   questions, insights, drafts, formatMs, onJump, onRegenerate, onDismiss, onTranslate, onAnswerLatest, manualPending = false,
+  onSplit,
 }) => {
   const ordered = useMemo(() => visibleQuestions(questions), [questions]);
   const latestId = ordered.length > 0 ? ordered[ordered.length - 1].id : null;
@@ -84,6 +88,8 @@ export const InterviewModeLayout: React.FC<Props> = ({
             onRegenerate={onRegenerate}
             onDismiss={onDismiss}
             onTranslate={onTranslate}
+            parts={partsOf(questions, focused.id)}
+            onSplit={onSplit}
           />
         ) : (
           <div className="rounded-2xl border border-dashed border-[#c4c7c5] p-8 text-center text-sm text-[#444746] space-y-3" data-testid="interview-empty">

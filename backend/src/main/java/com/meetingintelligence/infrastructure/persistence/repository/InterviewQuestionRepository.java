@@ -12,4 +12,7 @@ public interface InterviewQuestionRepository extends JpaRepository<InterviewQues
     List<InterviewQuestion> findTop20ByMeetingIdOrderByCreatedAtDesc(UUID meetingId);
 
     List<InterviewQuestion> findByMeetingIdOrderByCreatedAtAsc(UUID meetingId);
+
+    /** Complementos juntados a uma pergunta (spec 016), na ordem em que foram ditos. */
+    List<InterviewQuestion> findByMergedIntoIdOrderByCreatedAtAsc(UUID mergedIntoId);
 }

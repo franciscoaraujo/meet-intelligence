@@ -73,7 +73,7 @@ public final class QuestionDeduplicator {
         return new Decision(grew ? Kind.SAME_QUESTION_GREW : Kind.SAME_QUESTION, best.id(), bestSimilarity);
     }
 
-    static boolean introducesNewTopic(String newContext, Candidate previous) {
+    public static boolean introducesNewTopic(String newContext, Candidate previous) {
         if (newContext == null || newContext.isBlank()) return false;
         var stems = contentWithoutFraming(newContext);
         if (stems.size() < NEW_TOPIC_MIN_STEMS) return false;

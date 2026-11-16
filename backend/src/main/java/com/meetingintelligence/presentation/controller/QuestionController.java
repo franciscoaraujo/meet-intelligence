@@ -70,6 +70,19 @@ public class QuestionController {
         }
     }
 
+    @PostMapping("/{questionId}/split")
+    @Operation(summary = "Separar um complemento da pergunta principal",
+            description = "Spec 016: o complemento volta a ser pergunta própria e as duas são respondidas de novo; 409 se não for complemento")
+    public ResponseEntity<?> split(@PathVariable UUID meetingId, @PathVariable UUID questionId,
+                                   @AuthenticationPrincipal UserPrincipal user) {
+        requireQuestion(meetingId, questionId, user);
+        try {
+            return ResponseEntity.ok(detection.split(meetingId, questionId));
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(java.util.Map.of("message", "A pergunta não é um complemento."));
+        }
+    }
+
     @PostMapping("/{questionId}/dismiss")
     @Operation(summary = "Marcar que não era uma pergunta")
     public ResponseEntity<InterviewQuestion> dismiss(@PathVariable UUID meetingId, @PathVariable UUID questionId,

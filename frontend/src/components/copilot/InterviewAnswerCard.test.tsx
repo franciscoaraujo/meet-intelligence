@@ -57,6 +57,21 @@ describe('InterviewAnswerCard', () => {
     expect(screen.getByRole('heading').textContent).toBe('Como você garante consistência?');
   });
 
+  it('spec 016 RF-06: pergunta em 2 partes mostra o selo e "Separar" chama com o id da principal', () => {
+    const onSplit = vi.fn();
+    render(<InterviewAnswerCard question={question()} insight={insight()} parts={2} onSplit={onSplit} formatMs={formatMs} />);
+
+    expect(screen.getByTestId('parts-badge').textContent).toBe('2 partes');
+    fireEvent.click(screen.getByTestId('split-button'));
+    expect(onSplit).toHaveBeenCalledWith('q1');
+  });
+
+  it('spec 016: pergunta de uma parte não mostra selo nem "Separar"', () => {
+    render(<InterviewAnswerCard question={question()} insight={insight()} onSplit={vi.fn()} formatMs={formatMs} />);
+    expect(screen.queryByTestId('parts-badge')).toBeNull();
+    expect(screen.queryByTestId('split-button')).toBeNull();
+  });
+
   it('CA-06: resposta simulada exibe o selo "Simulação"', () => {
     render(<InterviewAnswerCard question={question()} insight={insight(true)} formatMs={formatMs} />);
     expect(screen.getByText('Simulação')).toBeTruthy();

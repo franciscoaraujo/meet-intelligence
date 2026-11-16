@@ -12,6 +12,8 @@ export interface CopilotStreamEvent {
   text?: string;
   reason?: string;
   insightId?: string;
+  /** Execução (spec 016): cresce a cada nova geração; eventos de uma execução anterior são ignorados. */
+  run?: number;
 }
 
 /**
@@ -24,6 +26,7 @@ export interface CopilotStreamEvent {
 export type CopilotDraftPhase = 'generating' | 'streaming' | 'adjusting' | 'completed' | 'failed';
 
 export interface CopilotDraft {
+  run?: number;
   attempt: number;
   lastSeq: number;
   text: string;
@@ -38,12 +41,21 @@ export const copilotStreamReducer = (state: CopilotDrafts, event: CopilotStreamE
   if (!event?.questionId) return state;
   const current = state[event.questionId];
 
+  // Spec 016: evento de uma execução substituída (mais antiga que a da tela) não mexe no card
+  if (current && event.run != null && current.run != null && event.run < current.run) return state;
+
   if (event.type === 'STARTED') {
-    // Um STARTED de nova execução (gerar de novo) recomeça a sequência em 0
-    const newRun = !current || event.seq === 0;
+    // Um STARTED de nova execução (gerar de novo, complemento) recomeça a sequência em 0
+    const newRun = !current || event.seq === 0 || (event.run != null && event.run !== current.run);
     if (!newRun && current && event.seq <= current.lastSeq) return state;
-    return { ...state, [event.questionId]: { attempt: event.attempt, lastSeq: event.seq, text: '', phase: 'generating' } };
+    return {
+      ...state,
+      [event.questionId]: { run: event.run, attempt: event.attempt, lastSeq: event.seq, text: '', phase: 'generating' },
+    };
   }
+
+  // Evento de uma execução mais nova cujo STARTED ainda não chegou: espera o STARTED
+  if (current && event.run != null && current.run != null && event.run > current.run) return state;
 
   // Sem STARTED visto (ex.: entrou no meio): só aceita eventos de fim, sem texto parcial
   if (!current) {
@@ -51,6 +63,7 @@ export const copilotStreamReducer = (state: CopilotDrafts, event: CopilotStreamE
       return {
         ...state,
         [event.questionId]: {
+          run: event.run,
           attempt: event.attempt,
           lastSeq: event.seq,
           text: '',

@@ -30,9 +30,15 @@ import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
 /**
  * Copiloto de entrevistas (spec 004): para uma pergunta detectada, gera UMA sugestão de resposta
@@ -63,6 +69,11 @@ public class InterviewCopilotService implements InterviewCopilot {
     private final MeterRegistry meters;
     private final CopilotStreamPublisher streams;
 
+    /** Spec 016: id crescente de cada execução (semeado pelo relógio, cresce também entre reinícios). */
+    private static final AtomicLong RUNS = new AtomicLong(System.currentTimeMillis() * 1000);
+    /** Execução vigente de cada pergunta; uma execução mais antiga é substituída (RF-03, RN-04). */
+    private final Map<UUID, Long> currentRun = new ConcurrentHashMap<>();
+
     @Async
     @Override
     public void answer(UUID questionId) {
@@ -71,8 +82,15 @@ public class InterviewCopilotService implements InterviewCopilot {
 
     /** Execução síncrona (usada pelo @Async e pelos testes). */
     public void answerNow(UUID questionId) {
+        long run = RUNS.incrementAndGet();
+        currentRun.put(questionId, run);
+        BooleanSupplier isCurrent = () -> Objects.equals(currentRun.get(questionId), run);
         InterviewQuestion question = questions.findById(questionId).orElse(null);
-        if (question == null || question.getStatus() == InterviewQuestion.Status.DISMISSED) return;
+        if (question == null || question.getStatus() == InterviewQuestion.Status.DISMISSED
+                || question.getStatus() == InterviewQuestion.Status.MERGED) {
+            currentRun.remove(questionId, run);
+            return;
+        }
         MDC.put("meetingId", question.getMeetingId().toString());
         MDC.put("questionId", questionId.toString());
         long start = System.nanoTime();
@@ -80,24 +98,35 @@ public class InterviewCopilotService implements InterviewCopilot {
             Meeting meeting = meetings.findById(question.getMeetingId()).orElseThrow();
             updateStatus(question, InterviewQuestion.Status.ANSWERING, null);
 
+            // Spec 016: a pergunta pode ter complementos ("e mais uma coisa…"), na ordem em que foram ditos
+            List<String> parts = new ArrayList<>();
+            parts.add(question.getQuestionText());
+            questions.findByMergedIntoIdOrderByCreatedAtAsc(questionId).stream()
+                    .filter(p -> p.getStatus() == InterviewQuestion.Status.MERGED)
+                    .forEach(p -> parts.add(p.getQuestionText()));
+            String promptQuestion = CopilotPromptBuilder.numberedParts(parts);
+            String allParts = String.join(" ", parts);
             // Spec 015: o cenário dito antes da pergunta também orienta a busca e a validação
             String context = question.getContextText();
-            String questionWithContext = context == null || context.isBlank()
-                    ? question.getQuestionText() : context + " " + question.getQuestionText();
+            String questionWithContext = context == null || context.isBlank() ? allParts : context + " " + allParts;
             String kb = meeting.getOrganization() != null
                     ? knowledgeBase.buildContext(meeting.getOrganization().getId(), questionWithContext) : "";
             String summary = summaries.findByMeetingId(meeting.getId()).map(MeetingSummary::getExecutiveSummary).orElse("");
             var recent = segments.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meeting.getId());
 
-            CopilotStreamPublisher.Session events = streams.open(meeting.getId(), question.getId());
+            CopilotStreamPublisher.Session events = streams.open(meeting.getId(), question.getId(), run);
             // "Pergunta terminou": o candidato confirmou que houve pergunta; o modelo não pode descartá-la
             boolean manual = question.getUtteranceType() == UtteranceType.MANUAL_TRIGGER;
             String correction = null;
             String lastFailure = "VALIDATION_FAILED";
             for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                if (!isCurrent.getAsBoolean()) {
+                    superseded(events);
+                    return;
+                }
                 LLMRequest request = LLMRequest.builder()
                         .systemPrompt(prompts.systemPrompt())
-                        .userPrompt(prompts.userPrompt(question.getQuestionText(), context, question.getUtteranceType().name(),
+                        .userPrompt(prompts.userPrompt(promptQuestion, context, parts.size(), question.getUtteranceType().name(),
                                 question.getScore().doubleValue(), recent, meeting.getUserInterviewRole(), summary, kb, correction,
                                 manual, meeting.getLanguage(), meeting.getAnswerStyle()))
                         .maxTokens(2048)
@@ -115,6 +144,7 @@ public class InterviewCopilotService implements InterviewCopilot {
                 LLMResponse response;
                 try {
                     response = orchestrator.executeStreaming(request, meeting, OPERATION, delta -> {
+                        if (!isCurrent.getAsBoolean()) return; // substituída: nada mais vai para a tela
                         deltas[0]++;
                         String text = extractor.feed(delta);
                         if (!text.isEmpty()) {
@@ -124,13 +154,26 @@ public class InterviewCopilotService implements InterviewCopilot {
                     });
                 } catch (LlmStreamAbortedException e) {
                     throttler.discard();
+                    if (!isCurrent.getAsBoolean()) {
+                        superseded(events);
+                        return;
+                    }
                     events.rejected("STREAM_ABORTED");
                     lastFailure = "STREAM_ABORTED";
                     log.info("Copiloto: streaming interrompido na tentativa {}", attempt);
                     continue;
                 } catch (RuntimeException e) {
+                    if (!isCurrent.getAsBoolean()) {
+                        superseded(events);
+                        return;
+                    }
                     events.failed("LLM_UNAVAILABLE");
                     fail(question, "LLM_UNAVAILABLE");
+                    return;
+                }
+                if (!isCurrent.getAsBoolean()) {
+                    throttler.discard();
+                    superseded(events);
                     return;
                 }
                 throttler.flush();
@@ -162,7 +205,7 @@ public class InterviewCopilotService implements InterviewCopilot {
                     return;
                 }
 
-                List<String> problems = CopilotAnswerValidator.validate(answer, questionWithContext, kb);
+                List<String> problems = CopilotAnswerValidator.validate(answer, questionWithContext, kb, parts.size());
                 if (!problems.isEmpty()) {
                     correction = String.join("; ", problems);
                     lastFailure = "VALIDATION_FAILED";
@@ -176,7 +219,12 @@ public class InterviewCopilotService implements InterviewCopilot {
                     // O título do card passa a ser a pergunta entendida, não o trecho inteiro com comentários
                     question.setQuestionText(answer.interpretedQuestion().trim());
                 }
-                AIInsight saved = publishAnswer(meeting, question, answer, response);
+                // RN-04: uma execução substituída nunca grava, mesmo que termine depois da nova
+                if (!isCurrent.getAsBoolean()) {
+                    superseded(events);
+                    return;
+                }
+                AIInsight saved = publishAnswer(meeting, question, answer, response, parts.size());
                 events.completed(saved.getId());
                 meters.counter("copilot.outcome", "status", "ANSWERED").increment();
                 Timer.builder("copilot.latency").tag("provider", String.valueOf(response.getProviderName()))
@@ -184,12 +232,24 @@ public class InterviewCopilotService implements InterviewCopilot {
                         .register(meters).record(System.nanoTime() - start, TimeUnit.NANOSECONDS);
                 return;
             }
+            if (!isCurrent.getAsBoolean()) {
+                superseded(events);
+                return;
+            }
             events.failed(lastFailure);
             fail(question, lastFailure);
         } finally {
+            currentRun.remove(questionId, run);
             MDC.remove("meetingId");
             MDC.remove("questionId");
         }
+    }
+
+    /** Spec 016, RF-03: outra execução da mesma pergunta começou; esta sai sem gravar nem mudar o status. */
+    private void superseded(CopilotStreamPublisher.Session events) {
+        events.rejected("SUPERSEDED");
+        meters.counter("copilot.superseded").increment();
+        log.info("Copiloto: execução substituída por uma mais nova");
     }
 
     /** Tempo até o primeiro texto (RNF-01) e um log por tentativa, sem o conteúdo da resposta. */
@@ -210,7 +270,8 @@ public class InterviewCopilotService implements InterviewCopilot {
                 deltas, extractor.finished());
     }
 
-    private AIInsight publishAnswer(Meeting meeting, InterviewQuestion question, CopilotAnswer answer, LLMResponse response) {
+    private AIInsight publishAnswer(Meeting meeting, InterviewQuestion question, CopilotAnswer answer, LLMResponse response,
+                                    int parts) {
         String metadata;
         try {
             metadata = objectMapper.writeValueAsString(java.util.Map.of(
@@ -222,8 +283,11 @@ public class InterviewCopilotService implements InterviewCopilot {
             metadata = null;
         }
 
-        AIInsight insight = question.getAnswerInsightId() != null
-                ? insights.findById(question.getAnswerInsightId()).orElse(null) : null;
+        // Relê o card vigente: uma execução anterior pode tê-lo criado depois que esta começou
+        UUID insightId = questions.findById(question.getId()).map(InterviewQuestion::getAnswerInsightId)
+                .orElse(question.getAnswerInsightId());
+        if (insightId != null) question.setAnswerInsightId(insightId);
+        AIInsight insight = insightId != null ? insights.findById(insightId).orElse(null) : null;
         if (insight == null) {
             insight = AIInsight.builder()
                     .meeting(meeting)
@@ -233,7 +297,7 @@ public class InterviewCopilotService implements InterviewCopilot {
                     .build();
         }
         // Spec 015: com contexto, o título é a pergunta completa escrita pelo copiloto
-        String shownQuestion = question.getContextText() != null && answer.interpretedQuestion() != null
+        String shownQuestion = (question.getContextText() != null || parts > 1) && answer.interpretedQuestion() != null
                 && !answer.interpretedQuestion().isBlank() ? answer.interpretedQuestion().trim() : question.getQuestionText();
         String title = "❓ " + shownQuestion;
         insight.setTitle(title.length() > 480 ? title.substring(0, 480) + "…" : title);

@@ -49,7 +49,30 @@ public final class CopilotAnswerValidator {
 
     private CopilotAnswerValidator() {}
 
+    /**
+     * Spec 016, RF-05: o prompt pede 60-140 palavras (60-180 com várias partes); o validador tolera até
+     * 200 (240 com várias partes), a mesma folga de 60 palavras.
+     */
+    public static final int TARGET_MAX_SPOKEN_WORDS = 140;
+    public static final int MULTI_PART_TARGET_MAX_SPOKEN_WORDS = 180;
+    static final int MULTI_PART_MAX_SPOKEN_WORDS = 240;
+
+    /** Limite pedido no prompt. */
+    public static int targetMaxSpokenWords(int parts) {
+        return parts > 1 ? MULTI_PART_TARGET_MAX_SPOKEN_WORDS : TARGET_MAX_SPOKEN_WORDS;
+    }
+
+    /** Limite aceito pelo validador. */
+    public static int maxSpokenWords(int parts) {
+        return parts > 1 ? MULTI_PART_MAX_SPOKEN_WORDS : MAX_SPOKEN_WORDS;
+    }
+
     public static List<String> validate(CopilotAnswer answer, String question, String knowledgeBaseText) {
+        return validate(answer, question, knowledgeBaseText, 1);
+    }
+
+    public static List<String> validate(CopilotAnswer answer, String question, String knowledgeBaseText, int parts) {
+        int maxWords = maxSpokenWords(parts);
         List<String> problems = new ArrayList<>();
         if (answer == null) {
             problems.add("resposta vazia");
@@ -60,8 +83,8 @@ public final class CopilotAnswerValidator {
             problems.add("spoken_answer ausente");
         } else {
             int words = answer.spokenAnswer().trim().split("\\s+").length;
-            if (words < MIN_SPOKEN_WORDS || words > MAX_SPOKEN_WORDS) {
-                problems.add("spoken_answer com " + words + " palavras (esperado 60-140)");
+            if (words < MIN_SPOKEN_WORDS || words > maxWords) {
+                problems.add("spoken_answer com " + words + " palavras (esperado " + MIN_SPOKEN_WORDS + "-" + maxWords + ")");
             }
         }
 

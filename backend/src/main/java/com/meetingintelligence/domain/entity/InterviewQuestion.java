@@ -22,7 +22,8 @@ import java.util.UUID;
 @Builder
 public class InterviewQuestion {
 
-    public enum Status { DETECTED, ANSWERING, ANSWERED, FAILED, DISMISSED }
+    /** MERGED: complemento juntado ao card de outra pergunta (spec 016). */
+    public enum Status { DETECTED, ANSWERING, ANSWERED, FAILED, DISMISSED, MERGED }
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -41,6 +42,10 @@ public class InterviewQuestion {
     /** Spec 015: fala do entrevistador logo antes da pergunta (o cenário a que ela se refere). */
     @Column(name = "context_text", columnDefinition = "TEXT")
     private String contextText;
+
+    /** Spec 016: pergunta principal a que este complemento foi juntado. */
+    @Column(name = "merged_into_id")
+    private UUID mergedIntoId;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "utterance_type", nullable = false, length = 30)

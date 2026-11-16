@@ -57,8 +57,31 @@ public class CopilotPromptBuilder {
 
     /** Spec 014: o estilo muda o tom, nunca os fatos nem o tamanho da resposta falada. */
     static String styleInstruction(AnswerStyle style) {
+        return styleInstruction(style, 140);
+    }
+
+    static String styleInstruction(AnswerStyle style, int maxWords) {
         return "<answer_style>\n" + style.instruction() + " O estilo muda só o tom: os fatos continuam restritos ao "
-                + "<knowledge_base>, e \"spoken_answer\" continua com 60 a 140 palavras.\n</answer_style>";
+                + "<knowledge_base>, e \"spoken_answer\" continua com 60 a " + maxWords + " palavras.\n</answer_style>";
+    }
+
+    /** Spec 016, RF-04: pergunta dita em partes ("e mais uma coisa…"). */
+    static String multiPartInstruction(int parts, int maxWords) {
+        return "<multi_part>\nO entrevistador fez a pergunta em " + parts + " partes, numeradas em <question> na ordem em "
+                + "que foram ditas. Responda a todas, na ordem, numa única \"spoken_answer\" com uma transição natural "
+                + "entre elas (ex.: \"Sobre a segunda parte…\"). Neste caso \"spoken_answer\" pode ter de 60 a " + maxWords
+                + " palavras. Escreva no campo \"question\" a pergunta completa, juntando as partes.\n</multi_part>";
+    }
+
+    /** Partes numeradas para o bloco {@code <question>}; uma parte só fica como está. */
+    public static String numberedParts(List<String> parts) {
+        if (parts.size() == 1) return parts.get(0);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < parts.size(); i++) {
+            if (i > 0) sb.append('\n');
+            sb.append(i + 1).append(". ").append(parts.get(i).trim());
+        }
+        return sb.toString();
     }
 
     /** Spec 011: em inglês/francês, a resposta inteira sai no idioma da entrevista. */
@@ -94,6 +117,16 @@ public class CopilotPromptBuilder {
                              List<TranscriptSegment> recentSegments, InterviewRole interviewRole, String summary,
                              String knowledgeBase, String correction, boolean manualTrigger, String languageTag,
                              AnswerStyle style) {
+        return userPrompt(question, questionContext, 1, utteranceType, score, recentSegments, interviewRole, summary,
+                knowledgeBase, correction, manualTrigger, languageTag, style);
+    }
+
+    /** @param parts número de partes da pergunta (spec 016); {@code question} já vem numerada quando há mais de uma */
+    public String userPrompt(String question, String questionContext, int parts, String utteranceType, double score,
+                             List<TranscriptSegment> recentSegments, InterviewRole interviewRole, String summary,
+                             String knowledgeBase, String correction, boolean manualTrigger, String languageTag,
+                             AnswerStyle style) {
+        int maxWords = com.meetingintelligence.domain.copilot.CopilotAnswerValidator.targetMaxSpokenWords(parts);
         boolean hasContext = questionContext != null && !questionContext.isBlank();
         StringBuilder conversation = new StringBuilder();
         int start = Math.max(0, recentSegments.size() - CONTEXT_SEGMENTS);
@@ -118,11 +151,14 @@ public class CopilotPromptBuilder {
         if (hasContext) {
             sb.append("\n\n").append(CONTEXT_INSTRUCTION);
         }
+        if (parts > 1) {
+            sb.append("\n\n").append(multiPartInstruction(parts, maxWords));
+        }
         if (manualTrigger) {
             sb.append("\n\n").append(MANUAL_TRIGGER_INSTRUCTION);
         }
         if (style != null && style.instruction() != null) {
-            sb.append("\n\n").append(styleInstruction(style));
+            sb.append("\n\n").append(styleInstruction(style, maxWords));
         }
         InterviewLanguage language = InterviewLanguage.fromTag(languageTag);
         if (language != InterviewLanguage.PT_BR) {
