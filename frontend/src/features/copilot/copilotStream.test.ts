@@ -62,3 +62,33 @@ describe('copilotStreamReducer (spec 008)', () => {
     expect(state.q2.text).toBe('dois');
   });
 });
+
+describe('execuções substituídas (spec 016)', () => {
+  it('CA-02: a nova execução assume o card; eventos atrasados da antiga (inclusive SUPERSEDED) são ignorados', () => {
+    const state = run([
+      ev('STARTED', 0, { run: 10 }),
+      ev('DELTA', 1, { run: 10, text: 'Primeira versão' }),
+      ev('STARTED', 0, { run: 11 }),
+      ev('DELTA', 1, { run: 11, text: 'Com as duas partes' }),
+      ev('DELTA', 2, { run: 10, text: ' atrasada' }),
+      ev('REJECTED', 3, { run: 10, reason: 'SUPERSEDED' }),
+    ]);
+    expect(state.q1).toMatchObject({ run: 11, phase: 'streaming', text: 'Com as duas partes' });
+
+    const done = copilotStreamReducer(state, ev('COMPLETED', 2, { run: 11, insightId: 'i2' }));
+    expect(done.q1).toMatchObject({ phase: 'completed', insightId: 'i2' });
+  });
+
+  it('SUPERSEDED antes do STARTED da nova execução: o rascunho antigo some e o card espera a nova', () => {
+    const state = run([
+      ev('STARTED', 0, { run: 10 }),
+      ev('DELTA', 1, { run: 10, text: 'Primeira versão' }),
+      ev('REJECTED', 2, { run: 10, reason: 'SUPERSEDED' }),
+    ]);
+    expect(state.q1).toMatchObject({ phase: 'adjusting', text: '' });
+    expect(isDraftActive(state.q1)).toBe(true);
+
+    const next = run([ev('DELTA', 1, { run: 11, text: 'antes do STARTED' }), ev('STARTED', 0, { run: 11 })], state);
+    expect(next.q1).toMatchObject({ run: 11, phase: 'generating', text: '' });
+  });
+});

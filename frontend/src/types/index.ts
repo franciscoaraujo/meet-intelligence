@@ -97,10 +97,13 @@ export interface AIInsight {
 export interface InterviewQuestion {
   id: string;
   meetingId: string;
-  status: 'DETECTED' | 'ANSWERING' | 'ANSWERED' | 'FAILED' | 'DISMISSED';
+  /** MERGED: complemento juntado ao card de outra pergunta (spec 016). */
+  status: 'DETECTED' | 'ANSWERING' | 'ANSWERED' | 'FAILED' | 'DISMISSED' | 'MERGED';
   questionText: string;
   /** Spec 015: fala do entrevistador logo antes da pergunta. */
   contextText?: string | null;
+  /** Spec 016: pergunta principal a que este complemento foi juntado. */
+  mergedIntoId?: string | null;
   utteranceType: string;
   score: number;
   autoAnswer: boolean;

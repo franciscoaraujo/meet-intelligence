@@ -23,9 +23,23 @@ export const saveInterviewModePreference = (enabled: boolean) => {
   }
 };
 
-/** Perguntas visíveis no modo entrevista, da mais antiga para a mais nova (descartadas ficam fora). */
+/**
+ * Perguntas visíveis no modo entrevista, da mais antiga para a mais nova. Descartadas ficam fora, e os
+ * complementos (spec 016) aparecem dentro do card da pergunta principal.
+ */
 export const visibleQuestions = (questions: InterviewQuestion[]): InterviewQuestion[] =>
   questions
-    .filter((q) => q.status !== 'DISMISSED')
+    .filter((q) => q.status !== 'DISMISSED' && q.status !== 'MERGED')
     .slice()
     .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
+
+/** Complementos juntados a uma pergunta (spec 016), na ordem em que foram ditos. */
+export const complementsOf = (questions: InterviewQuestion[], questionId: string): InterviewQuestion[] =>
+  questions
+    .filter((q) => q.status === 'MERGED' && q.mergedIntoId === questionId)
+    .slice()
+    .sort((a, b) => (a.createdAt ?? '').localeCompare(b.createdAt ?? ''));
+
+/** Número de partes da pergunta: ela mesma + os complementos. */
+export const partsOf = (questions: InterviewQuestion[], questionId: string): number =>
+  1 + complementsOf(questions, questionId).length;

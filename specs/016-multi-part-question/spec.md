@@ -1,6 +1,6 @@
 # Spec 016 — Pergunta em várias partes
 
-Prioridade: **P1** · Status: **Planejada** · Origem: pedido do usuário (2026-11-16), continuação da spec 015 ("juntar uma pergunta que vem em várias partes")
+Prioridade: **P1** · Status: **Implementada (2026-11-16; testes automatizados, falta validar em entrevista real)** · Origem: pedido do usuário (2026-11-16), continuação da spec 015 ("juntar uma pergunta que vem em várias partes")
 
 ## Problema
 O entrevistador costuma completar a pergunta depois de uma pausa:
@@ -21,7 +21,7 @@ Um complemento dito logo depois de uma pergunta entra no **mesmo card**. A respo
 ## Requisitos funcionais
 - **RF-01 Detecção do complemento:** uma pergunta nova é complemento da principal quando cumpre **todas** as condições abaixo:
   1. a deduplicação (spec 005) a classificou como `NEW`;
-  2. o fim da fala dela está a até **30 s** do fim da fala da pergunta principal (`capture_end_ms`; sem esse dado, vale `created_at`);
+  2. foi detectada até **30 s** depois da última parte (a principal ou o último complemento), medidos por `created_at`. O `capture_end_ms` não serve aqui, porque o relógio da captura recomeça quando a captura é reiniciada;
   3. começa com um marcador de continuação do idioma da entrevista (spec 011), depois de normalizar o texto como o classificador faz:
      - **PT:** "e mais uma coisa", "mais uma coisa", "outra coisa", "além disso", "e também", "e ainda", "complementando", "só complementando", "aproveitando", "e se", "e como", "e qual", "e quais", "e por que", "e quando", "e onde", "e o que";
      - **EN:** "and also", "also", "one more thing", "another thing", "on top of that", "following up", "and how", "and what", "and why", "and when", "and which", "what if", "and if";
@@ -29,6 +29,7 @@ Um complemento dito logo depois de uma pergunta entra no **mesmo card**. A respo
   4. não há fala do candidato (`SELF`, sem eco) entre as duas perguntas;
   5. o contexto antes dela (spec 015) não traz assunto novo, pela mesma regra da deduplicação (RF-04 da spec 015);
   6. a principal tem menos de 3 partes.
+- **RF-01a Complemento sem cara de pergunta:** uma fala do entrevistador que começa com marcador e cumpre as condições 2 a 6 também é complemento, mesmo que o classificador não a tenha considerado pergunta. Ela precisa ter ao menos 3 palavras depois do marcador. Exemplo: "e se o Redis cair", transcrito sem "?".
 - **RF-02 Registro:** o complemento é gravado como pergunta própria, com status `MERGED` e `merged_into_id` apontando para a principal (migration V12).
   - O `question_text` da principal **não muda**.
   - Os trechos (`source_segment_ids`) e o fim da captura (`capture_end_ms`) do complemento são somados à principal.
@@ -42,7 +43,7 @@ Um complemento dito logo depois de uma pergunta entra no **mesmo card**. A respo
 - **RF-04 Prompt:** com mais de uma parte, `<question>` traz as partes numeradas, na ordem em que foram ditas, junto com a instrução `<multi_part>`:
   - responder a todas as partes, na ordem, numa única `spoken_answer`, com uma transição natural entre elas;
   - escrever em `"question"` a pergunta completa, juntando as partes.
-- **RF-05 Tamanho:** com mais de uma parte, a `spoken_answer` pode ter até **180 palavras** (o limite continua 60–140 com uma parte). O validador e o texto do prompt usam o mesmo limite.
+- **RF-05 Tamanho:** com mais de uma parte, o prompt pede de 60 a **180 palavras** na `spoken_answer` (com uma parte, continua 60–140, inclusive na instrução de estilo da spec 014). O validador mantém a mesma folga de hoje, 60 palavras acima do pedido: aceita até 200 com uma parte e até **240** com várias.
 - **RF-06 Card:**
   - selo "2 partes" ou "3 partes";
   - título com a pergunta completa escrita pelo copiloto (como na spec 015);
@@ -77,7 +78,7 @@ Um complemento dito logo depois de uma pergunta entra no **mesmo card**. A respo
   - um complemento depois de um cenário novo (spec 015);
   - uma quarta parte.
 - **CA-04** "Separar" → dois cards: o complemento é respondido sozinho e a principal é refeita só com a parte dela. Id que não é complemento → 409.
-- **CA-05** Com 2 partes, uma `spoken_answer` de 170 palavras é aceita; com 1 parte, é rejeitada (limite de 140).
+- **CA-05** Com 2 partes, uma `spoken_answer` de 220 palavras é aceita; com 1 parte, é rejeitada (limite de 200). O prompt de 2 partes pede "60 a 180 palavras".
 - **CA-06** Marcadores em inglês e francês juntam com a reunião no idioma correspondente. Em português, "and also" não junta.
 - **CA-07** Reuniões existentes continuam funcionando: `merged_into_id` é opcional e nenhuma pergunta antiga muda de status.
 
@@ -86,7 +87,7 @@ Um complemento dito logo depois de uma pergunta entra no **mesmo card**. A respo
 - Juntar complementos ao card de uma pergunta feita pelo botão "Pergunta terminou".
 - Separar duas pessoas do lado do entrevistador (diarização), registrado em [ideias-futuras](../ideias-futuras.md).
 
-## Implementação prevista
+## Implementação
 - **Backend:**
   - **Banco:** migration `V12__question_parts.sql`, com `interview_questions.merged_into_id UUID NULL REFERENCES interview_questions(id)` e um índice. O status `MERGED` entra em `InterviewQuestion.Status`.
   - **Domínio:** `domain/question/FollowUpDetector`, com os marcadores por idioma e a regra do RF-01. Função pura, testada com um corpus por idioma, como `question-corpus-*.csv`.
@@ -100,8 +101,11 @@ Um complemento dito logo depois de uma pergunta entra no **mesmo card**. A respo
   - `InterviewAnswerCard`: selo de partes e ação "Separar";
   - `InterviewModeLayout`: esconde os complementos da lista;
   - `copilotStream.ts`: trata `SUPERSEDED` como `REJECTED`, descartando o rascunho.
-- **Testes previstos:**
-  - `FollowUpDetectorTest` (corpus PT/EN/FR, positivos e negativos);
-  - `MultiPartQuestionTest`: CA-01 a CA-04 na detecção e no copiloto, incluindo a substituição em curso;
-  - validador (CA-05) e `MigrationsIT` (CA-07);
-  - card: selo, "Separar" e o rascunho descartado em `SUPERSEDED`.
+- **Testes:**
+  - `FollowUpDetectorTest` (29): corpus PT/EN/FR com 18 positivos e 9 negativos, condições do RF-01 e o RF-01a;
+  - `MultiPartQuestionTest` (11): CA-01, CA-03 (cinco casos), CA-04, RF-01a, RF-03 e RN-03 na detecção;
+  - `InterviewCopilotServiceTest` (+3): prompt com partes numeradas, substituição em curso (CA-02) e limite de palavras (CA-05);
+  - `MigrationsIT` (+1, PostgreSQL real): CA-07;
+  - frontend: reducer com `run` (+2), `interviewParts.test.ts` (2) e card (+2).
+  - Backend 224, frontend 120. Desligando a junção ou a checagem de execução vigente, 6 testes falham.
+- **Ajuste do evento de streaming:** cada execução publica um `run` crescente, semeado pelo relógio para continuar crescendo depois de um reinício. Sem ele, um evento atrasado da execução antiga apagaria o rascunho da nova, porque o `seq` recomeça em 0 a cada execução.

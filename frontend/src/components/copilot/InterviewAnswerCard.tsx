@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Copy, Check, RefreshCw, XCircle, Loader2, ChevronRight, Languages, Sparkles } from 'lucide-react';
+import { Copy, Check, RefreshCw, XCircle, Loader2, ChevronRight, Languages, Sparkles, Split } from 'lucide-react';
 import type { AIInsight, InterviewQuestion } from '../../types';
 import { parseCopilotMetadata, SECTION_TITLES, type CopilotTranslation } from '../../features/copilot/copilotAnswer';
 import { INTERVIEW_LANGUAGES } from '../../features/live/interviewLanguage';
@@ -7,6 +7,10 @@ import { isDraftActive, type CopilotDraft } from '../../features/copilot/copilot
 
 interface Props {
   question?: InterviewQuestion;
+  /** Spec 016: partes da pergunta (ela + complementos "e mais uma coisa…"). */
+  parts?: number;
+  /** Spec 016: desfaz a junção dos complementos desta pergunta. */
+  onSplit?: (questionId: string) => void;
   insight?: AIInsight;
   /** Rascunho em streaming (spec 008); enquanto ativo, substitui a resposta gravada. */
   draft?: CopilotDraft;
@@ -26,6 +30,7 @@ const STATUS_LABEL: Record<InterviewQuestion['status'], string> = {
   ANSWERED: 'Respondida',
   FAILED: 'Não foi possível gerar a resposta',
   DISMISSED: 'Descartada',
+  MERGED: 'Juntada à pergunta anterior',
 };
 
 /**
@@ -33,7 +38,7 @@ const STATUS_LABEL: Record<InterviewQuestion['status'], string> = {
  * Também mostra perguntas ainda sem resposta (gerando, falha ou aguardando confirmação).
  */
 export const InterviewAnswerCard: React.FC<Props> = ({
-  question, insight, draft, variant = 'normal', onRegenerate, onDismiss, onJump, onTranslate, formatMs,
+  question, insight, draft, variant = 'normal', onRegenerate, onDismiss, onJump, onTranslate, formatMs, parts = 1, onSplit,
 }) => {
   const [copied, setCopied] = useState(false);
   const [contextOpen, setContextOpen] = useState(false);
@@ -107,6 +112,15 @@ export const InterviewAnswerCard: React.FC<Props> = ({
           <span className="inline-flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-[#e8f0fe] text-[#1a73e8]">
             <Sparkles className="w-3 h-3" /> Copiloto
           </span>
+          {parts > 1 && (
+            <span
+              className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#f3e8fd] text-[#6a1b9a]"
+              title="O entrevistador completou a pergunta; a resposta cobre todas as partes"
+              data-testid="parts-badge"
+            >
+              {parts} partes
+            </span>
+          )}
           {meta?.simulated && (
             <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#fef7e0] text-[#5f4300]" title="Gerada sem modelo de IA">
               Simulação
@@ -252,6 +266,16 @@ export const InterviewAnswerCard: React.FC<Props> = ({
           {onRegenerate && status !== 'ANSWERING' && !streaming && (
             <button onClick={() => onRegenerate(questionId)} className="text-[11px] font-medium text-[#0b57d0] flex items-center gap-1 cursor-pointer">
               <RefreshCw className="w-3 h-3" /> {status === 'ANSWERED' ? 'Gerar de novo' : status === 'FAILED' ? 'Tentar novamente' : 'Responder'}
+            </button>
+          )}
+          {onSplit && parts > 1 && !streaming && (
+            <button
+              onClick={() => onSplit(questionId)}
+              className="text-[11px] font-medium text-[#444746] flex items-center gap-1 cursor-pointer"
+              title="Responder cada parte em um card separado"
+              data-testid="split-button"
+            >
+              <Split className="w-3 h-3" /> Separar
             </button>
           )}
           {onDismiss && status !== 'DISMISSED' && (

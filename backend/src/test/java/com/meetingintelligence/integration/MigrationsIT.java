@@ -55,4 +55,14 @@ class MigrationsIT extends AbstractPostgresIT {
 
         assertThat(nullable).isEqualTo("YES");
     }
+
+    @Test
+    @DisplayName("Spec 016 CA-07: interview_questions.merged_into_id existe e é opcional")
+    void mergedIntoColumnIsOptional() {
+        String nullable = jdbc.queryForObject(
+                "select is_nullable from information_schema.columns where table_name = 'interview_questions' and column_name = 'merged_into_id'",
+                String.class);
+
+        assertThat(nullable).isEqualTo("YES");
+    }
 }

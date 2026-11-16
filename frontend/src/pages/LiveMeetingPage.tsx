@@ -23,7 +23,7 @@ import { InterviewModeLayout } from '../components/live/InterviewModeLayout';
 import { LiveMeetingHeader } from '../components/live/LiveMeetingHeader';
 import { mergeById, upsertById } from '../features/live/mergeById';
 import { useStickToBottom } from '../features/live/useStickToBottom';
-import { loadInterviewModePreference, saveInterviewModePreference } from '../features/live/interviewMode';
+import { loadInterviewModePreference, saveInterviewModePreference, complementsOf, partsOf } from '../features/live/interviewMode';
 import { saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
 import { saveAnswerStylePreference, toAnswerStyle, type AnswerStyle } from '../features/live/answerStyle';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
@@ -366,6 +366,20 @@ export const LiveMeetingPage: React.FC = () => {
     await api.post(`/meetings/${id}/questions/${questionId}/answer`).catch((e) => console.error('Erro ao gerar resposta:', e));
   };
 
+  /** Spec 016: "Separar" — cada complemento volta a ser pergunta própria, com resposta própria. */
+  const splitQuestion = async (questionId: string) => {
+    if (!id) return;
+    const complements = complementsOf(questions, questionId);
+    for (const c of complements) {
+      try {
+        const res = await api.post<InterviewQuestion>(`/meetings/${id}/questions/${c.id}/split`);
+        setQuestions((prev) => prev.map((q) => (q.id === c.id ? res.data : q)));
+      } catch (e) {
+        console.error('Erro ao separar a pergunta:', e);
+      }
+    }
+  };
+
   const dismissQuestion = async (questionId: string) => {
     if (!id) return;
     try {
@@ -643,6 +657,7 @@ export const LiveMeetingPage: React.FC = () => {
   // Perguntas ainda sem card de resposta gravado: gerando (com ou sem rascunho), falha ou aguardando confirmação
   const pendingQuestions = questions.filter(
     (q) =>
+      q.status !== 'MERGED' &&
       !q.answerInsightId &&
       (isDraftActive(copilotDrafts[q.id]) || q.status === 'ANSWERING' || q.status === 'FAILED' || (q.status === 'DETECTED' && !q.autoAnswer))
   );
@@ -864,6 +879,7 @@ export const LiveMeetingPage: React.FC = () => {
               onDismiss={dismissQuestion}
                         onTranslate={translateAnswer}
               onAnswerLatest={answerLatestQuestion}
+              onSplit={(qid) => void splitQuestion(qid)}
               manualPending={manualPending}
             />
           </section>
@@ -926,6 +942,8 @@ export const LiveMeetingPage: React.FC = () => {
                       <InterviewAnswerCard
                         key={`q-${q.id}`}
                         question={q}
+                        parts={partsOf(questions, q.id)}
+                        onSplit={(qid) => void splitQuestion(qid)}
                         draft={copilotDrafts[q.id]}
                         formatMs={formatMs}
                         onJump={jumpToTimestamp}
@@ -939,6 +957,8 @@ export const LiveMeetingPage: React.FC = () => {
                       key={ins.id}
                       insight={ins}
                       question={questions.find((q) => q.id === ins.questionId)}
+                      parts={ins.questionId ? partsOf(questions, ins.questionId) : 1}
+                      onSplit={(qid) => void splitQuestion(qid)}
                       draft={ins.questionId ? copilotDrafts[ins.questionId] : undefined}
                       formatMs={formatMs}
                       onJump={jumpToTimestamp}

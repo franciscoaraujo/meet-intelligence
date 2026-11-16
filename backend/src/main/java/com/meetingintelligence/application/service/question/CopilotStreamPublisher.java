@@ -20,24 +20,39 @@ public class CopilotStreamPublisher {
     public enum Type { STARTED, DELTA, REJECTED, COMPLETED, FAILED }
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
-    public record Event(Type type, UUID questionId, int attempt, long seq, String text, String reason, UUID insightId) {}
+    /**
+     * @param run identifica a execução (spec 016): cresce a cada nova geração da mesma pergunta, inclusive
+     *            entre reinícios do servidor; o card ignora eventos de uma execução anterior.
+     */
+    public record Event(Type type, UUID questionId, int attempt, long seq, String text, String reason, UUID insightId,
+                        Long run) {
+        public Event(Type type, UUID questionId, int attempt, long seq, String text, String reason, UUID insightId) {
+            this(type, questionId, attempt, seq, text, reason, insightId, null);
+        }
+    }
 
     private final SimpMessagingTemplate messaging;
 
     public Session open(UUID meetingId, UUID questionId) {
-        return new Session(meetingId, questionId);
+        return new Session(meetingId, questionId, null);
+    }
+
+    public Session open(UUID meetingId, UUID questionId, Long run) {
+        return new Session(meetingId, questionId, run);
     }
 
     /** Eventos de uma execução do copiloto para uma pergunta; {@code seq} cresce em todas as tentativas. */
     public final class Session {
         private final String destination;
         private final UUID questionId;
+        private final Long run;
         private long seq;
         private int attempt;
 
-        private Session(UUID meetingId, UUID questionId) {
+        private Session(UUID meetingId, UUID questionId, Long run) {
             this.destination = "/topic/meetings/" + meetingId + "/copilot";
             this.questionId = questionId;
+            this.run = run;
         }
 
         public void started(int attempt) {
@@ -62,7 +77,7 @@ public class CopilotStreamPublisher {
         }
 
         private void send(Type type, String text, String reason, UUID insightId) {
-            Event event = new Event(type, questionId, attempt, seq++, text, reason, insightId);
+            Event event = new Event(type, questionId, attempt, seq++, text, reason, insightId, run);
             try {
                 messaging.convertAndSend(destination, event);
             } catch (Exception e) {

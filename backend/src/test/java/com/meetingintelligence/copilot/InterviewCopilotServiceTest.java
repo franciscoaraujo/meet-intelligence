@@ -404,6 +404,82 @@ class InterviewCopilotServiceTest {
         assertThat(response.getModelName()).isEqualTo("simulacao-local");
     }
 
+    private InterviewQuestion complementOf(InterviewQuestion principal, String text) {
+        return InterviewQuestion.builder().id(UUID.randomUUID()).meetingId(principal.getMeetingId())
+                .status(InterviewQuestion.Status.MERGED).mergedIntoId(principal.getId()).questionText(text)
+                .utteranceType(UtteranceType.DIRECT_QUESTION).score(BigDecimal.ONE).sourceSegmentIds(new UUID[0]).build();
+    }
+
+    @Test
+    @DisplayName("Spec 016 RF-04: com complemento, <question> traz as partes numeradas e o prompt pede 60 a 180 palavras")
+    void multiPartPrompt() {
+        when(questions.findByMergedIntoIdOrderByCreatedAtAsc(question.getId()))
+                .thenReturn(List.of(complementOf(question, "E mais uma coisa, como você testaria isso?")));
+        String full = "Como você garante consistência entre microsserviços e como testaria isso?";
+        streamResponses(VALID_JSON.replaceFirst("\\{", "{\"question\": \"" + full + "\", "));
+        ArgumentCaptor<LLMRequest> req = ArgumentCaptor.forClass(LLMRequest.class);
+
+        service.answerNow(question.getId());
+
+        verify(orchestrator).executeStreaming(req.capture(), any(), any(), any());
+        assertThat(req.getValue().getUserPrompt())
+                .contains("1. Como você garante consistência entre microsserviços?\n2. E mais uma coisa, como você testaria isso?")
+                .contains("<multi_part>").contains("em 2 partes").contains("60 a 180 palavras");
+        verify(knowledgeBase).buildContext(any(), eq("Como você garante consistência entre microsserviços? E mais uma coisa, como você testaria isso?"));
+        assertThat(savedInsights.get(0).getTitle()).isEqualTo("❓ " + full);
+    }
+
+    @Test
+    @DisplayName("Spec 016 CA-02: complemento chega durante a geração → a antiga emite SUPERSEDED e não grava; só a nova grava")
+    void supersededRunNeverSaves() {
+        when(questions.findByMergedIntoIdOrderByCreatedAtAsc(question.getId()))
+                .thenReturn(List.of())
+                .thenReturn(List.of(complementOf(question, "E mais uma coisa, como você testaria isso?")));
+        boolean[] nested = {false};
+        when(orchestrator.executeStreaming(any(), any(), any(), any())).thenAnswer(inv -> {
+            LlmStreamListener listener = inv.getArgument(3);
+            listener.onDelta("{\"is_question_for_candidate\": true, \"spoken_answer\": \"Primeira versão ");
+            if (!nested[0]) {
+                nested[0] = true;
+                service.answerNow(question.getId()); // o complemento chegou: nova execução, que termina antes
+                listener.onDelta("que não deve aparecer");
+            } else {
+                listener.onDelta("\"}");
+            }
+            return llm(VALID_JSON);
+        });
+
+        service.answerNow(question.getId());
+
+        assertThat(savedInsights).hasSize(1);
+        assertThat(question.getAnswerVersion()).isEqualTo(1);
+        assertThat(question.getStatus()).isEqualTo(InterviewQuestion.Status.ANSWERED);
+        List<Long> runs = streamEvents.stream().map(CopilotStreamPublisher.Event::run).distinct().toList();
+        assertThat(runs).hasSize(2).doesNotContainNull();
+        long oldRun = runs.get(0);
+        long newRun = runs.get(1);
+        assertThat(newRun).isGreaterThan(oldRun);
+        assertThat(streamEvents).filteredOn(e -> e.run() == oldRun).extracting(CopilotStreamPublisher.Event::type)
+                .doesNotContain(CopilotStreamPublisher.Type.COMPLETED, CopilotStreamPublisher.Type.FAILED)
+                .endsWith(CopilotStreamPublisher.Type.REJECTED);
+        assertThat(streamEvents).filteredOn(e -> e.run() == oldRun && e.type() == CopilotStreamPublisher.Type.REJECTED)
+                .extracting(CopilotStreamPublisher.Event::reason).containsExactly("SUPERSEDED");
+        assertThat(streamEvents).filteredOn(e -> e.run() == newRun).extracting(CopilotStreamPublisher.Event::type)
+                .endsWith(CopilotStreamPublisher.Type.COMPLETED);
+        assertThat(streamEvents).noneMatch(e -> e.text() != null && e.text().contains("não deve aparecer"));
+    }
+
+    @Test
+    @DisplayName("Spec 016 CA-05: 220 palavras passam com 2 partes e são rejeitadas com 1 (folga de 60 sobre o pedido)")
+    void spokenLimitDependsOnParts() {
+        String spoken = String.join(" ", java.util.Collections.nCopies(220, "palavra"));
+        CopilotAnswer answer = new CopilotAnswer(true, "BASIC", spoken, null, List.of(), List.of(), 0.8, false);
+
+        assertThat(CopilotAnswerValidator.validate(answer, "Conte sobre sua carreira", RESUME, 2)).isEmpty();
+        assertThat(CopilotAnswerValidator.validate(answer, "Conte sobre sua carreira", RESUME, 1))
+                .anyMatch(p -> p.contains("220 palavras") && p.contains("30-200"));
+    }
+
     @Test
     @DisplayName("008 RN-03: a simulação sem chave também sai em partes, com spoken_answer logo no início")
     void simulationStreamsInParts() {
