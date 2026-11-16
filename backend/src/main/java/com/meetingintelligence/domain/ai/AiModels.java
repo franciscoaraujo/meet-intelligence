@@ -39,6 +39,12 @@ public final class AiModels {
     /** Deepgram pré-gravado: recomendado para reuniões com vários falantes; suporta pt-BR. */
     public static final String DEEPGRAM_STT = "nova-3";
 
+    /**
+     * Preço do Deepgram Nova-3 pré-gravado, plano pago por uso: US$ 0,0043/min (spec 018; fontes de
+     * terceiros consultadas em 2026-11-16, confirmar em deepgram.com/pricing).
+     */
+    public static final double DEEPGRAM_STT_USD_PER_HOUR = 0.258;
+
     /** xAI speech-to-text (spec 017): a mesma chave do Grok das respostas. Alternativa: grok-voice-transcribe-1.0. */
     public static final String GROK_STT = "grok-voice-transcribe-2.0";
 

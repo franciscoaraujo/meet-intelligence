@@ -8,6 +8,11 @@ spring:
   application:
     name: meeting-intelligence-api
 
+  # Spec 018: chaves locais em .env (CHAVE=valor) na pasta de onde o backend é iniciado (backend/ pelo
+  # Maven). Fora do Git; variáveis de ambiente têm prioridade.
+  config:
+    import: optional:file:.env[.properties]
+
   servlet:
     multipart:
       max-file-size: 10MB
@@ -118,6 +123,9 @@ app:
   speech:
     # Simulação de transcrição para desenvolvimento sem chaves (grava source=SIMULATION). Nunca em produção.
     simulation-enabled: ${SPEECH_SIMULATION_ENABLED:false}
+    # Spec 018: chaves do servidor (pagas pelo produto) antes das chaves da organização.
+    # false = ordem antiga, para planos em que o cliente traz a própria chave.
+    server-keys-first: ${SPEECH_SERVER_KEYS_FIRST:true}
     local-google-stt:
       # STT via Python/speech_recognition (endpoint não oficial do Google, sem SLA). Só desenvolvimento.
       enabled: ${LOCAL_GOOGLE_STT_ENABLED:false}

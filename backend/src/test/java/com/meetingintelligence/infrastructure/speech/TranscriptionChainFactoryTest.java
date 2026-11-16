@@ -150,4 +150,64 @@ class TranscriptionChainFactoryTest {
                 .build(null, SttRequest.Mode.BATCH)))
                 .containsExactly("GROK_STT");
     }
+
+    // ------------------------------------------------------------------ spec 018
+
+    private TranscriptionChainFactory serverFirst(String serverOpenAi, String serverDeepgram, String serverXai,
+                                                  boolean localEnabled, boolean simulationEnabled) {
+        StaticListableBeanFactory beans = new StaticListableBeanFactory();
+        if (localEnabled) beans.addBean("local", new LocalGoogleSttProvider());
+        if (simulationEnabled) beans.addBean("sim", new SimulatedSttProvider());
+        return new TranscriptionChainFactory(new GeminiAudioSttProvider(http, mapper),
+                new OpenAiTranscribeSttProvider(http, mapper), new DeepgramSpeechToTextProvider(http, mapper),
+                new GrokSttProvider(http, mapper), beans.getBeanProvider(LocalGoogleSttProvider.class),
+                beans.getBeanProvider(SimulatedSttProvider.class), serverOpenAi, serverDeepgram, serverXai, true);
+    }
+
+    @Test
+    @DisplayName("Spec 018 CA-01: chaves do servidor primeiro (Deepgram), as da organização como reserva")
+    void serverKeysFirstLive() {
+        var steps = serverFirst("sk-server", "dg-server", "xai-server", true, true)
+                .build(orgWith("AIza-org", "sk-org", "xai-org"), SttRequest.Mode.LIVE);
+
+        assertThat(names(steps)).containsExactly("DEEPGRAM", "OPENAI_TRANSCRIBE", "GROK_STT",
+                "GEMINI", "OPENAI_TRANSCRIBE", "GROK_STT", "LOCAL_GOOGLE_STT", "SIMULATION");
+        assertThat(steps.get(0).credentials().apiKey()).isEqualTo("dg-server");
+        assertThat(steps.get(5).credentials().apiKey()).isEqualTo("xai-org");
+    }
+
+    @Test
+    @DisplayName("Spec 018 CA-01: o caso real (Deepgram no servidor, só xAI na org) usa o Deepgram antes do Grok da org")
+    void deepgramBeforeOrganizationGrok() {
+        var steps = serverFirst("mock-key", "dg-server", "mock-key", true, false)
+                .build(orgWith(null, null, "xai-org"), SttRequest.Mode.LIVE);
+
+        assertThat(names(steps)).containsExactly("DEEPGRAM", "GROK_STT", "LOCAL_GOOGLE_STT");
+    }
+
+    @Test
+    @DisplayName("Spec 018 CA-03: gravação enviada com o Deepgram primeiro")
+    void serverKeysFirstBatch() {
+        assertThat(names(serverFirst("sk-server", "dg-server", "xai-server", false, false)
+                .build(orgWith("AIza-org", null, "xai-org"), SttRequest.Mode.BATCH)))
+                .containsExactly("DEEPGRAM", "OPENAI_TRANSCRIBE", "GROK_STT");
+    }
+
+    @Test
+    @DisplayName("Spec 018: sem chave no servidor, as da organização continuam funcionando")
+    void serverKeysFirstWithoutServerKeys() {
+        assertThat(names(serverFirst("mock-key", "mock-key", "mock-key", false, false)
+                .build(orgWith("AIza-org", null, "xai-org"), SttRequest.Mode.LIVE)))
+                .containsExactly("GEMINI", "GROK_STT");
+    }
+
+    @Test
+    @DisplayName("Spec 018 CA-05: valores de exemplo do .env.example ('sua-chave-...') não contam como chave")
+    void exampleValuesAreNotKeys() {
+        assertThat(TranscriptionChainFactory.isUsableKey("sua-chave-deepgram")).isFalse();
+        assertThat(TranscriptionChainFactory.isUsableKey(" sua-chave-xai ")).isFalse();
+        assertThat(TranscriptionChainFactory.isUsableKey("dg-real-key")).isTrue();
+        assertThat(names(serverFirst("sua-chave-openai", "sua-chave-deepgram", "sua-chave-xai", false, false)
+                .build(null, SttRequest.Mode.LIVE))).isEmpty();
+    }
 }
