@@ -29,6 +29,8 @@ public class CreateMeetingRequest {
     private MeetingType meetingType = MeetingType.GENERAL;
     @Builder.Default
     private String language = "pt-BR";
+    /** Spec 014: tom das respostas do copiloto; nulo = NEUTRAL. */
+    private com.meetingintelligence.domain.enums.AnswerStyle answerStyle;
     private List<String> participantEmails;
 }
 

@@ -28,6 +28,8 @@ export interface Meeting {
   language: string;
   /** Papel do usuário na entrevista (spec 003). */
   userInterviewRole?: 'CANDIDATE' | 'INTERVIEWER';
+  /** Spec 014: tom das respostas do copiloto. */
+  answerStyle?: 'NEUTRAL' | 'INFORMAL' | 'FORMAL' | 'TECHNICAL';
   createdAt: string;
 }
 

@@ -3,6 +3,7 @@ import {
   ArrowLeft, CheckCircle2, Loader2, Mic, MonitorSpeaker, MoreHorizontal, RefreshCw, ShieldCheck, Square, Target, Upload,
 } from 'lucide-react';
 import { INTERVIEW_LANGUAGES, type InterviewLanguageTag } from '../../features/live/interviewLanguage';
+import { ANSWER_STYLES, type AnswerStyle } from '../../features/live/answerStyle';
 import type { MicMode } from '../../features/capture/types';
 
 interface Props {
@@ -11,6 +12,8 @@ interface Props {
   language: InterviewLanguageTag;
   onLanguageChange: (tag: InterviewLanguageTag) => void;
   languageError?: string | null;
+  answerStyle: AnswerStyle;
+  onAnswerStyleChange: (style: AnswerStyle) => void;
   role: 'CANDIDATE' | 'INTERVIEWER';
   onRoleChange: (role: 'CANDIDATE' | 'INTERVIEWER') => void;
   connected: boolean;
@@ -86,6 +89,20 @@ export const LiveMeetingHeader: React.FC<Props> = (p) => {
               {INTERVIEW_LANGUAGES.map((l) => (
                 <option key={l.tag} value={l.tag}>
                   {l.short} · {l.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={p.answerStyle}
+              onChange={(e) => p.onAnswerStyleChange(e.target.value as AnswerStyle)}
+              className="h-6 pl-1.5 pr-5 rounded-md border border-[#dadce0] bg-white text-[11px] font-medium text-[#3c4043] cursor-pointer"
+              aria-label="Estilo das respostas"
+              title={`Estilo das respostas do copiloto: ${ANSWER_STYLES.find((s) => s.value === p.answerStyle)?.hint ?? ''}`}
+              data-testid="answer-style"
+            >
+              {ANSWER_STYLES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  Estilo: {s.label}
                 </option>
               ))}
             </select>

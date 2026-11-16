@@ -7,6 +7,8 @@ const props = (patch: Partial<React.ComponentProps<typeof LiveMeetingHeader>> = 
   onBack: vi.fn(),
   language: 'en-US' as const,
   onLanguageChange: vi.fn(),
+  answerStyle: 'NEUTRAL' as const,
+  onAnswerStyleChange: vi.fn(),
   role: 'CANDIDATE' as const,
   onRoleChange: vi.fn(),
   connected: true,
@@ -79,5 +81,14 @@ describe('LiveMeetingHeader (spec 013)', () => {
     expect(button.textContent).toContain('Encerrar');
     fireEvent.click(button);
     expect(p.onToggleRecording).toHaveBeenCalled();
+  });
+
+  it('spec 014: seletor de estilo com Padrão, Informal, Formal e Técnica', () => {
+    const p = props();
+    render(<LiveMeetingHeader {...p} />);
+    const select = screen.getByTestId('answer-style') as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toEqual(['NEUTRAL', 'INFORMAL', 'FORMAL', 'TECHNICAL']);
+    fireEvent.change(select, { target: { value: 'TECHNICAL' } });
+    expect(p.onAnswerStyleChange).toHaveBeenCalledWith('TECHNICAL');
   });
 });

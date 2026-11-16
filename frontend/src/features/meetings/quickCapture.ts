@@ -1,5 +1,6 @@
 /** Captura avulsa (spec 010): sessão de captura sem Google Meet, criada em um clique. */
 import { loadLanguagePreference } from '../live/interviewLanguage';
+import { loadAnswerStylePreference } from '../live/answerStyle';
 
 const pad = (n: number) => String(n).padStart(2, '0');
 
@@ -8,7 +9,11 @@ export const quickCaptureTitle = (now: Date): string =>
   `Captura de ${pad(now.getDate())}/${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
 /** Corpo do POST /meetings para uma captura avulsa (sem googleMeetLink). */
-export const buildQuickCaptureRequest = (now: Date = new Date(), language: string = loadLanguagePreference()) => ({
+export const buildQuickCaptureRequest = (
+  now: Date = new Date(),
+  language: string = loadLanguagePreference(),
+  answerStyle: string = loadAnswerStylePreference(),
+) => ({
   title: quickCaptureTitle(now),
   description: 'Captura avulsa (sem Google Meet)',
   scheduledStart: now.toISOString(),
@@ -17,6 +22,8 @@ export const buildQuickCaptureRequest = (now: Date = new Date(), language: strin
   meetingType: 'GENERAL' as const,
   // Spec 011: idioma da última escolha do usuário
   language,
+  // Spec 014: estilo das respostas da última escolha do usuário
+  answerStyle,
 });
 
 /** Reunião sem link do Meet: exibida como "Captura avulsa" nas listas. */
