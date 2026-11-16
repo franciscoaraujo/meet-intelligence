@@ -78,6 +78,11 @@ public class Meeting {
     @Builder.Default
     private String language = "pt-BR";
 
+    /** Papel do usuário na entrevista (spec 003, RF-04); nulo = candidato. */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "user_interview_role", length = 20)
+    private com.meetingintelligence.domain.enums.InterviewRole userInterviewRole;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

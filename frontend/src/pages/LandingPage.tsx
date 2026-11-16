@@ -150,7 +150,7 @@ export const LandingPage: React.FC = () => {
               compartilhados no exterior e cobram em dólar por usuário, o{' '}
               <strong className="text-[#1f1f1f]">Meet Intelligence</strong> roda na{' '}
               <strong className="text-[#1f1f1f]">sua infraestrutura local (On-Premise)</strong> ou com{' '}
-              <strong className="text-[#1f1f1f]">sua própria chave de IA (Gemini, OpenAI ou Claude)</strong>.
+              <strong className="text-[#1f1f1f]">sua própria chave de IA (Gemini, Grok ou Claude)</strong>.
             </p>
 
             <div className="flex flex-wrap items-center gap-3.5 pt-2">
@@ -188,7 +188,7 @@ export const LandingPage: React.FC = () => {
                 </div>
                 <div>
                   <p className="text-xs font-semibold text-[#1f1f1f]">Multi-LLM & Local</p>
-                  <p className="text-[11px] text-[#444746]">Ollama, Gemini, GPT, Claude</p>
+                  <p className="text-[11px] text-[#444746]">Ollama, Gemini, Grok, Claude</p>
                 </div>
               </div>
 
@@ -398,7 +398,7 @@ export const LandingPage: React.FC = () => {
                 </td>
                 <td className="p-4 bg-[#e8f0fe]/35 border-x border-[#d3e3fd] font-semibold text-[#146c2e]">
                   <span className="inline-flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4" /> Gemini, OpenAI GPT, Claude ou Local
+                    <CheckCircle2 className="w-4 h-4" /> Gemini, xAI Grok, Claude ou Local
                   </span>
                 </td>
                 <td className="p-4 text-[#444746]">Fechado / Sem controle do cliente</td>
@@ -495,7 +495,7 @@ export const LandingPage: React.FC = () => {
               O <strong className="text-white">Meet Intelligence</strong> foi projetado com uma camada
               de orquestração desacoplada (<code className="text-white">AIOrchestrator</code>). Isso
               significa que sua empresa pode escolher entre conectar chaves corporativas (Gemini,
-              OpenAI, Claude) ou rodar modelos locais como{' '}
+              Grok, Claude) ou rodar modelos locais como{' '}
               <strong className="text-white">Qwen 2.5, Llama 3.3, Gemma 3 e Faster-Whisper</strong>{' '}
               dentro da própria rede interna.
             </p>
@@ -541,7 +541,7 @@ export const LandingPage: React.FC = () => {
               <KeyRound className="w-6 h-6 text-[#81c995]" />
               <h3 className="text-sm font-semibold text-white">Modo 2: BYOK (Sua Chave de API)</h3>
               <p className="text-xs text-[#d3e3fd] leading-relaxed">
-                Conecte a chave corporativa da sua empresa no Google AI Studio (Gemini), OpenAI ou
+                Conecte a chave corporativa da sua empresa no Google AI Studio (Gemini), xAI (Grok) ou
                 Anthropic Claude e pague apenas centavos diretamente ao provedor.
               </p>
             </div>

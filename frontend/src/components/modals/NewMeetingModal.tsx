@@ -27,10 +27,9 @@ export const NewMeetingModal: React.FC<NewMeetingModalProps> = ({ isOpen, onClos
     setErrorMsg(null);
 
     if (!title.trim()) return;
-    if (!googleMeetLink.trim() || !googleMeetLink.includes('meet.google.com/')) {
-      setErrorMsg(
-        'Informe o link válido de uma reunião existente agendada no Google Meet (ex: https://meet.google.com/abc-defg-hij).'
-      );
+    // Spec 010: o link é opcional (captura avulsa); se informado, precisa ser do Google Meet
+    if (googleMeetLink.trim() && !googleMeetLink.includes('meet.google.com/')) {
+      setErrorMsg('O link informado não é do Google Meet (ex: https://meet.google.com/abc-defg-hij). Deixe em branco para uma captura avulsa.');
       return;
     }
 
@@ -44,7 +43,7 @@ export const NewMeetingModal: React.FC<NewMeetingModalProps> = ({ isOpen, onClos
       await api.post('/meetings', {
         title,
         description,
-        googleMeetLink: googleMeetLink.trim(),
+        googleMeetLink: googleMeetLink.trim() || undefined,
         scheduledStart: startIso,
         scheduledEnd: endIso,
         captureMechanism,
@@ -75,7 +74,7 @@ export const NewMeetingModal: React.FC<NewMeetingModalProps> = ({ isOpen, onClos
             </div>
             <div>
               <h2 className="text-lg font-medium text-[#1f1f1f]">Vincular Reunião Agendada</h2>
-              <p className="text-xs text-[#444746]">Apenas compromissos existentes no Google Meet</p>
+              <p className="text-xs text-[#444746]">Com link do Google Meet ou como captura avulsa (qualquer áudio do computador)</p>
             </div>
           </div>
           <button
@@ -110,11 +109,10 @@ export const NewMeetingModal: React.FC<NewMeetingModalProps> = ({ isOpen, onClos
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-xs font-medium text-[#444746] mb-1.5">
-                Link do Google Meet *
+                Link do Google Meet (opcional)
               </label>
               <input
                 type="url"
-                required
                 placeholder="https://meet.google.com/xxx-yyyy-zzz"
                 value={googleMeetLink}
                 onChange={(e) => setGoogleMeetLink(e.target.value)}

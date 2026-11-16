@@ -3,8 +3,9 @@ package com.meetingintelligence.application.service.ai;
 import com.meetingintelligence.domain.entity.Meeting;
 import com.meetingintelligence.domain.entity.TranscriptChunk;
 import com.meetingintelligence.domain.entity.TranscriptSegment;
+import com.meetingintelligence.infrastructure.async.AfterCommit;
+
 import com.meetingintelligence.infrastructure.persistence.repository.TranscriptChunkRepository;
-import com.meetingintelligence.infrastructure.persistence.repository.TranscriptSegmentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -14,159 +15,112 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+/**
+ * Agrega a transcrição em blocos para a análise incremental da reunião (resumo, tarefas, decisões)
+ * e para a indexação semântica (RAG).
+ *
+ * Spec 005: perguntas NÃO passam mais por aqui (ver QuestionDetectionService). O bloco fecha por
+ * volume — {@value #MIN_WORDS_PER_CHUNK} palavras ou {@value #MAX_CHUNK_AGE_MS} ms — e não a cada
+ * palavra-chave (P-11). Cada fala entra uma única vez (só o texto novo das fusões) e o índice do
+ * bloco é calculado sob trava por reunião.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class TranscriptChunkAggregatorService {
 
+    static final int MIN_WORDS_PER_CHUNK = 120;
+    static final long MAX_CHUNK_AGE_MS = 60_000;
+
     private final TranscriptChunkRepository chunkRepository;
-    private final TranscriptSegmentRepository segmentRepository;
     private final AIInsightExtractorService insightExtractorService;
     private final EmbeddingIndexingService embeddingIndexingService;
 
-    // Buffer em memória para agregação por reunião ativa
-    private final ConcurrentHashMap<UUID, StringBuilder> bufferMap = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, Long> chunkStartMap = new ConcurrentHashMap<>();
-    private final ConcurrentHashMap<UUID, Integer> wordCountMap = new ConcurrentHashMap<>();
+    private static final class Buffer {
+        final StringBuilder text = new StringBuilder();
+        int words;
+        Long startTimeMs;
+        long endTimeMs;
+        long openedAtWallMs;
+    }
 
-    private static final int MIN_WORDS_PER_CHUNK = 5;
-    private static final int MAX_WORDS_PER_CHUNK = 250;
+    private final ConcurrentHashMap<UUID, Buffer> buffers = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<UUID, Object> locks = new ConcurrentHashMap<>();
 
+    /**
+     * @param newText somente o texto novo deste segmento (na fusão, o fragmento acrescentado)
+     */
     @Transactional
-    public void onNewSegment(Meeting meeting, TranscriptSegment segment) {
+    public void onNewSegment(Meeting meeting, TranscriptSegment segment, String newText) {
+        if (newText == null || newText.isBlank() || segment.isEchoSuspected()) return;
         UUID meetingId = meeting.getId();
-        String text = segment.getCorrectedText() != null ? segment.getCorrectedText() : segment.getOriginalText();
+        synchronized (lockFor(meetingId)) {
+            Buffer buffer = buffers.computeIfAbsent(meetingId, id -> {
+                Buffer b = new Buffer();
+                b.openedAtWallMs = System.currentTimeMillis();
+                return b;
+            });
+            if (buffer.startTimeMs == null) buffer.startTimeMs = segment.getStartTimeMs();
+            buffer.endTimeMs = segment.getEndTimeMs();
+            String speaker = segment.getSpeakerLabel() != null ? "[" + segment.getSpeakerLabel() + "]: " : "";
+            buffer.text.append(speaker).append(newText.trim()).append('\n');
+            buffer.words += newText.trim().split("\\s+").length;
 
-        bufferMap.putIfAbsent(meetingId, new StringBuilder());
-        chunkStartMap.putIfAbsent(meetingId, segment.getStartTimeMs());
-        wordCountMap.putIfAbsent(meetingId, 0);
-
-        StringBuilder buffer = bufferMap.get(meetingId);
-        String speakerPrefix = segment.getSpeakerLabel() != null ? "[" + segment.getSpeakerLabel() + "]: " : "";
-        buffer.append(speakerPrefix).append(text).append("\n");
-
-        int currentWords = wordCountMap.get(meetingId) + text.split("\\s+").length;
-        wordCountMap.put(meetingId, currentWords);
-
-        boolean isInterviewerOrQuestion = isImmediateTriggerSegment(segment.getSpeakerLabel(), text);
-
-        // Dispara imediatamente se for pergunta/tópico técnico do entrevistador ou atingir 5 palavras
-        if (isInterviewerOrQuestion || currentWords >= MIN_WORDS_PER_CHUNK) {
-            flushChunk(meeting, segment.getEndTimeMs());
+            boolean byVolume = buffer.words >= MIN_WORDS_PER_CHUNK;
+            boolean byAge = System.currentTimeMillis() - buffer.openedAtWallMs >= MAX_CHUNK_AGE_MS;
+            if (byVolume || byAge) {
+                flushLocked(meeting);
+            }
         }
     }
 
-    private boolean isImmediateTriggerSegment(String speakerLabel, String text) {
-        if (text == null || text.isBlank()) return false;
-        String lower = text.toLowerCase();
-        if (speakerLabel != null && speakerLabel.toLowerCase().contains("entrevistador")) {
-            return true;
-        }
-        return lower.contains("?")
-                || lower.contains("explique")
-                || lower.contains("conceito")
-                || lower.contains("o que é")
-                || lower.contains("o que e")
-                || lower.contains("por que")
-                || lower.contains("porque")
-                || lower.contains("como ")
-                || lower.contains("qual ")
-                || lower.contains("quais ")
-                || lower.contains("diferença")
-                || lower.contains("fale sobre")
-                || lower.contains("solid")
-                || lower.contains("sólido")
-                || lower.contains("solido")
-                || lower.contains("polimorfismo")
-                || lower.contains("herança")
-                || lower.contains("encapsulamento")
-                || lower.contains("java")
-                || lower.contains("spring")
-                || lower.contains("microsservi")
-                || lower.contains("arquitetura")
-                || lower.contains("banco")
-                || lower.contains("sql")
-                || lower.contains("docker")
-                || lower.contains("kafka")
-                || lower.contains("rabbit")
-                || lower.contains("react")
-                || lower.contains("rest")
-                || lower.contains("api");
-    }
-
+    /**
+     * Fecha o bloco em andamento e reprocessa blocos que ficaram sem análise (fim da reunião ou botão
+     * "Consolidar com IA"). Não reanalisa conteúdo já analisado (antes: refazia os últimos 10
+     * segmentos e duplicava insights).
+     */
     @Transactional
     public void flushRemaining(Meeting meeting) {
         UUID meetingId = meeting.getId();
-        if (bufferMap.containsKey(meetingId) && bufferMap.get(meetingId).length() > 0) {
-            flushChunk(meeting, System.currentTimeMillis());
-            return;
+        synchronized (lockFor(meetingId)) {
+            flushLocked(meeting);
         }
-
-        // Caso o buffer em memória esteja vazio, verifica se existem chunks pendentes de processamento pela IA
-        List<TranscriptChunk> existingChunks = chunkRepository.findByMeetingIdOrderByChunkIndexAsc(meetingId);
-        List<TranscriptChunk> unprocessed = existingChunks.stream()
+        List<TranscriptChunk> unprocessed = chunkRepository.findByMeetingIdOrderByChunkIndexAsc(meetingId).stream()
                 .filter(c -> !c.isProcessedByAi())
                 .toList();
-
-        if (!unprocessed.isEmpty()) {
-            // Processa os últimos blocos pendentes (até 3 blocos mais recentes para resposta rápida)
-            int startIdx = Math.max(0, unprocessed.size() - 3);
-            for (int i = startIdx; i < unprocessed.size(); i++) {
-                TranscriptChunk pendingChunk = unprocessed.get(i);
-                embeddingIndexingService.indexChunkAsync(meeting, pendingChunk);
-                insightExtractorService.processChunkAsync(meeting, pendingChunk);
-            }
-            return;
-        }
-
-        // Caso não existam chunks ou todos já tenham sido marcados, consolida os segmentos recentes da transcrição
-        List<TranscriptSegment> segments = segmentRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId);
-        if (!segments.isEmpty()) {
-            StringBuilder sb = new StringBuilder();
-            int startSeg = Math.max(0, segments.size() - 10);
-            long startMs = segments.get(startSeg).getStartTimeMs();
-            long endMs = segments.get(segments.size() - 1).getEndTimeMs();
-            for (int i = startSeg; i < segments.size(); i++) {
-                TranscriptSegment s = segments.get(i);
-                String spk = s.getSpeakerLabel() != null ? "[" + s.getSpeakerLabel() + "]: " : "";
-                String txt = s.getCorrectedText() != null ? s.getCorrectedText() : s.getOriginalText();
-                sb.append(spk).append(txt).append("\n");
-            }
-            bufferMap.put(meetingId, sb);
-            chunkStartMap.put(meetingId, startMs);
-            flushChunk(meeting, endMs);
+        int startIdx = Math.max(0, unprocessed.size() - 3);
+        for (TranscriptChunk pending : unprocessed.subList(startIdx, unprocessed.size())) {
+            dispatch(meeting, pending);
         }
     }
 
-    private void flushChunk(Meeting meeting, long endTimeMs) {
-        UUID meetingId = meeting.getId();
-        StringBuilder buffer = bufferMap.remove(meetingId);
-        Long startTime = chunkStartMap.remove(meetingId);
-        wordCountMap.remove(meetingId);
+    private void flushLocked(Meeting meeting) {
+        Buffer buffer = buffers.remove(meeting.getId());
+        if (buffer == null || buffer.text.isEmpty()) return;
 
-        if (buffer == null || buffer.length() == 0) return;
-
-        List<TranscriptChunk> existingChunks = chunkRepository.findByMeetingIdOrderByChunkIndexAsc(meetingId);
-        int nextIndex = existingChunks.size() + 1;
-
-        TranscriptChunk chunk = TranscriptChunk.builder()
+        int nextIndex = chunkRepository.findByMeetingIdOrderByChunkIndexAsc(meeting.getId()).stream()
+                .mapToInt(TranscriptChunk::getChunkIndex).max().orElse(0) + 1;
+        TranscriptChunk saved = chunkRepository.save(TranscriptChunk.builder()
                 .meeting(meeting)
                 .chunkIndex(nextIndex)
-                .textContent(buffer.toString().trim())
-                .startTimeMs(startTime != null ? startTime : 0L)
-                .endTimeMs(endTimeMs)
+                .textContent(buffer.text.toString().trim())
+                .startTimeMs(buffer.startTimeMs != null ? buffer.startTimeMs : 0L)
+                .endTimeMs(buffer.endTimeMs)
                 .processedByAi(false)
-                .build();
+                .build());
+        log.info("Bloco {} gerado para a reunião {} ({} palavras)", nextIndex, meeting.getId(), buffer.words);
+        dispatch(meeting, saved);
+    }
 
-        TranscriptChunk saved = chunkRepository.save(chunk);
-        log.info("Bloco semântico {} gerado para reunião {} (Tamanho: {} palavras)",
-                nextIndex, meeting.getTitle(), saved.getTextContent().split("\\s+").length);
+    /** IA e indexação só após o commit: a análise roda em outra thread e referencia o bloco gravado. */
+    private void dispatch(Meeting meeting, TranscriptChunk chunk) {
+        AfterCommit.run(() -> {
+            embeddingIndexingService.indexChunkAsync(meeting, chunk);
+            insightExtractorService.processChunkAsync(meeting, chunk);
+        });
+    }
 
-        // Dispara indexação vetorial no pgvector de forma assíncrona
-        embeddingIndexingService.indexChunkAsync(meeting, saved);
-
-        // Dispara análise automática com IA de forma assíncrona
-        insightExtractorService.processChunkAsync(meeting, saved);
+    private Object lockFor(UUID meetingId) {
+        return locks.computeIfAbsent(meetingId, id -> new Object());
     }
 }
-

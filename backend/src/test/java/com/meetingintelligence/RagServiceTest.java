@@ -60,6 +60,12 @@ class RagServiceTest {
     @Spy
     private ObjectMapper objectMapper = new ObjectMapper();
 
+    @Mock
+    private com.meetingintelligence.infrastructure.persistence.repository.TranscriptSegmentRepository segmentRepository;
+
+    @Mock
+    private com.meetingintelligence.application.service.ai.KnowledgeBaseService knowledgeBaseService;
+
     @InjectMocks
     private RagService ragService;
 
@@ -97,7 +103,7 @@ class RagServiceTest {
         MeetingEmbedding mockEmbedding = MeetingEmbedding.builder()
                 .id(UUID.randomUUID())
                 .meeting(meeting)
-                .embedding(new PGvector(mockVector))
+                .embedding(new PGvector(mockVector).toString())
                 .textPreview("Foi decidido utilizar o PostgreSQL com pgvector para RAG.")
                 .startTimeMs(5000L)
                 .endTimeMs(12000L)
@@ -107,7 +113,7 @@ class RagServiceTest {
 
         LLMResponse mockLlmResponse = LLMResponse.builder()
                 .providerName("GEMINI")
-                .modelName("gemini-1.5-flash")
+                .modelName("gemini-3.5-flash-lite")
                 .content("Foi decidido utilizar o PostgreSQL com pgvector para implementar a busca semântica do RAG.")
                 .promptTokens(180)
                 .completionTokens(60)

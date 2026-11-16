@@ -15,16 +15,16 @@ import java.util.UUID;
 public class OrganizationAiConfigDto {
 
     private UUID organizationId;
-    private String activeProvider; // GEMINI, OPENAI, CLAUDE
+    private String activeProvider; // GEMINI, GROK, CLAUDE
     
     // Status e chave mascarada
     private boolean geminiConfigured;
     private String geminiMaskedKey;
     private String geminiModel;
 
-    private boolean openAiConfigured;
-    private String openAiMaskedKey;
-    private String openAiModel;
+    private boolean grokConfigured;
+    private String grokMaskedKey;
+    private String grokModel;
 
     private boolean claudeConfigured;
     private String claudeMaskedKey;

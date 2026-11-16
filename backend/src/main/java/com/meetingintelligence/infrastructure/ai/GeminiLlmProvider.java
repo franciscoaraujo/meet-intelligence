@@ -2,9 +2,11 @@ package com.meetingintelligence.infrastructure.ai;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.meetingintelligence.domain.ai.AiModels;
 import com.meetingintelligence.domain.ai.LLMProvider;
 import com.meetingintelligence.domain.ai.LLMRequest;
 import com.meetingintelligence.domain.ai.LLMResponse;
+import com.meetingintelligence.domain.ai.TextRelevance;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
@@ -19,6 +21,7 @@ import java.math.RoundingMode;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Component
 @Slf4j
@@ -28,15 +31,27 @@ public class GeminiLlmProvider implements LLMProvider {
     private final String model;
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
+    private final SseClient sse;
+    private final String streamBaseUrl;
 
+    private static final String BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/";
+
+    @org.springframework.beans.factory.annotation.Autowired
     public GeminiLlmProvider(
             @Value("${app.ai.gemini.api-key:mock-key}") String apiKey,
-            @Value("${app.ai.gemini.model:gemini-1.5-flash}") String model,
+            @Value("${app.ai.gemini.model:" + AiModels.GEMINI_DEFAULT + "}") String model,
             ObjectMapper objectMapper) {
+        this(apiKey, model, objectMapper, new SseClient(java.time.Duration.ofSeconds(10), java.time.Duration.ofSeconds(20)), BASE_URL);
+    }
+
+    /** Construtor de teste: permite apontar o streaming para um servidor local. */
+    GeminiLlmProvider(String apiKey, String model, ObjectMapper objectMapper, SseClient sse, String streamBaseUrl) {
         this.apiKey = apiKey;
         this.model = model;
         this.restTemplate = new RestTemplate();
         this.objectMapper = objectMapper;
+        this.sse = sse;
+        this.streamBaseUrl = streamBaseUrl;
     }
 
     @Override
@@ -68,7 +83,7 @@ public class GeminiLlmProvider implements LLMProvider {
 
         boolean available = effectiveKey != null && !effectiveKey.isBlank() && !effectiveKey.equals("mock-key");
         if (!available) {
-            log.info("Gemini API Key não configurada. Utilizando simulação de alta precisão do Gemini 1.5 Flash para desenvolvimento local.");
+            log.info("Gemini API Key não configurada. Utilizando simulação local (modo de desenvolvimento).");
             return generateMockResponse(request, startTime);
         }
 
@@ -81,77 +96,200 @@ public class GeminiLlmProvider implements LLMProvider {
             HttpHeaders headers = new HttpHeaders();
             headers.setContentType(MediaType.APPLICATION_JSON);
 
-            // Monta payload do Gemini API
-            Map<String, Object> body = new HashMap<>();
-
-            // System instructions
-            if (request.getSystemPrompt() != null) {
-                body.put("systemInstruction", Map.of(
-                        "parts", List.of(Map.of("text", request.getSystemPrompt()))
-                ));
-            }
-
-            // User content
-            body.put("contents", List.of(
-                    Map.of(
-                            "role", "user",
-                            "parts", List.of(Map.of("text", request.getUserPrompt()))
-                    )
-            ));
-
-            // Generation config
-            Map<String, Object> genConfig = new HashMap<>();
-            genConfig.put("temperature", request.getTemperature() != null ? request.getTemperature() : 0.2);
-            if (request.getMaxTokens() != null) {
-                genConfig.put("maxOutputTokens", request.getMaxTokens());
-            }
-            if (request.isJsonMode()) {
-                genConfig.put("responseMimeType", "application/json");
-            }
-            body.put("generationConfig", genConfig);
+            Map<String, Object> body = buildBody(request);
 
             HttpEntity<Map<String, Object>> entity = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = restTemplate.postForEntity(url, entity, String.class);
 
             long latencyMs = System.currentTimeMillis() - startTime;
 
-            if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
-                JsonNode root = objectMapper.readTree(response.getBody());
-                JsonNode candidates = root.path("candidates");
-                if (candidates.isArray() && candidates.size() > 0) {
-                    String content = candidates.get(0).path("content").path("parts").get(0).path("text").asText();
-
-                    JsonNode usageMetadata = root.path("usageMetadata");
-                    int promptTokens = usageMetadata.path("promptTokenCount").asInt(250);
-                    int completionTokens = usageMetadata.path("candidatesTokenCount").asInt(180);
-                    int totalTokens = usageMetadata.path("totalTokenCount").asInt(promptTokens + completionTokens);
-
-                    // Custo Gemini 1.5 Flash: ~$0.075 / 1M input tokens, ~$0.30 / 1M output tokens
-                    BigDecimal cost = BigDecimal.valueOf((promptTokens * 0.000000075) + (completionTokens * 0.0000003))
-                            .setScale(6, RoundingMode.HALF_UP);
-
-                    return LLMResponse.builder()
-                            .providerName(getProviderName())
-                            .modelName(effectiveModel)
-                            .content(content)
-                            .promptTokens(promptTokens)
-                            .completionTokens(completionTokens)
-                            .totalTokens(totalTokens)
-                            .estimatedCostUsd(cost)
-                            .latencyMs(latencyMs)
-                            .build();
-                }
+            JsonNode root = objectMapper.readTree(response.getBody());
+            String content = extractCandidateText(root);
+            if (content.isBlank()) {
+                String finishReason = root.path("candidates").path(0).path("finishReason").asText("desconhecido");
+                throw new IllegalStateException("Gemini não retornou texto (finishReason=" + finishReason + ").");
             }
+
+            JsonNode usageMetadata = root.path("usageMetadata");
+            int promptTokens = usageMetadata.path("promptTokenCount").asInt(0);
+            // A saída cobrada inclui os tokens de raciocínio (thoughtsTokenCount)
+            int completionTokens = usageMetadata.path("candidatesTokenCount").asInt(0)
+                    + usageMetadata.path("thoughtsTokenCount").asInt(0);
+            int totalTokens = usageMetadata.path("totalTokenCount").asInt(promptTokens + completionTokens);
+
+            return LLMResponse.builder()
+                    .providerName(getProviderName())
+                    .modelName(effectiveModel)
+                    .content(content)
+                    .promptTokens(promptTokens)
+                    .completionTokens(completionTokens)
+                    .totalTokens(totalTokens)
+                    .estimatedCostUsd(AiModels.estimateCost(effectiveModel, promptTokens, completionTokens))
+                    .latencyMs(latencyMs)
+                    .build();
+        } catch (org.springframework.web.client.HttpStatusCodeException e) {
+            // Erro real da API: propaga para o teste de conexão mostrar a falha e o orquestrador acionar o fallback
+            String detail = e.getResponseBodyAsString();
+            log.error("Erro na chamada à Gemini API ({}): {}", e.getStatusCode().value(), detail);
+            throw new IllegalStateException("Gemini API retornou HTTP " + e.getStatusCode().value() + ": "
+                    + (detail == null || detail.isBlank() ? "sem detalhes" : detail), e);
+        } catch (IllegalStateException e) {
+            throw e;
         } catch (Exception e) {
-            log.error("Erro na chamada à Gemini API: {}", e.getMessage(), e);
+            log.error("Falha ao chamar a Gemini API: {}", e.getMessage(), e);
+            throw new IllegalStateException("Falha ao chamar a Gemini API: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Streaming por {@code :streamGenerateContent?alt=sse} (spec 008). A chave vai no cabeçalho
+     * {@code x-goog-api-key}, não na URL. Sem chave, a simulação local é entregue em partes (RN-03).
+     */
+    @Override
+    public LLMResponse stream(LLMRequest request, String overrideApiKey, String overrideModel,
+                              com.meetingintelligence.domain.ai.LlmStreamListener listener) {
+        long startTime = System.currentTimeMillis();
+        String effectiveKey = (overrideApiKey != null && !overrideApiKey.isBlank()) ? overrideApiKey : this.apiKey;
+        String effectiveModel = (overrideModel != null && !overrideModel.isBlank()) ? overrideModel : this.model;
+
+        if (effectiveKey == null || effectiveKey.isBlank() || effectiveKey.equals("mock-key")) {
+            LLMResponse simulated = generateMockResponse(request, startTime);
+            String content = simulated.getContent();
+            for (int i = 0; i < content.length(); i += SIMULATION_CHUNK) {
+                listener.onDelta(content.substring(i, Math.min(content.length(), i + SIMULATION_CHUNK)));
+            }
+            return simulated;
         }
 
-        return generateMockResponse(request, startTime);
+        StreamAccumulator acc = new StreamAccumulator(objectMapper, listener);
+        try {
+            sse.post(streamBaseUrl + effectiveModel + ":streamGenerateContent?alt=sse",
+                    Map.of("x-goog-api-key", effectiveKey), objectMapper.writeValueAsString(buildBody(request)), acc::accept);
+        } catch (SseClient.HttpStatusException e) {
+            log.error("Erro no streaming da Gemini API ({}): {}", e.status(), e.body());
+            throw new IllegalStateException("Gemini API retornou HTTP " + e.status() + ": "
+                    + (e.body() == null || e.body().isBlank() ? "sem detalhes" : e.body()), e);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            throw new IllegalStateException("Falha ao montar a requisição da Gemini API", e);
+        }
+        if (acc.finishReason == null) {
+            throw new IllegalStateException("Streaming da Gemini API terminou sem finishReason");
+        }
+        String content = acc.text.toString().trim();
+        if (content.isBlank()) {
+            throw new IllegalStateException("Gemini não retornou texto (finishReason=" + acc.finishReason + ").");
+        }
+        return LLMResponse.builder()
+                .providerName(getProviderName())
+                .modelName(effectiveModel)
+                .content(content)
+                .promptTokens(acc.promptTokens)
+                .completionTokens(acc.completionTokens)
+                .totalTokens(acc.promptTokens + acc.completionTokens)
+                .estimatedCostUsd(AiModels.estimateCost(effectiveModel, acc.promptTokens, acc.completionTokens))
+                .latencyMs(System.currentTimeMillis() - startTime)
+                .build();
+    }
+
+    static final int SIMULATION_CHUNK = 24;
+
+    /** Processa, na ordem, os pedaços (GenerateContentResponse) do streaming do Gemini. */
+    static final class StreamAccumulator {
+        private final ObjectMapper objectMapper;
+        private final com.meetingintelligence.domain.ai.LlmStreamListener listener;
+        final StringBuilder text = new StringBuilder();
+        String finishReason;
+        int promptTokens;
+        int completionTokens;
+
+        StreamAccumulator(ObjectMapper objectMapper, com.meetingintelligence.domain.ai.LlmStreamListener listener) {
+            this.objectMapper = objectMapper;
+            this.listener = listener;
+        }
+
+        void accept(SseClient.Event event) {
+            if (event.data() == null || event.data().isBlank()) return;
+            JsonNode root;
+            try {
+                root = objectMapper.readTree(event.data());
+            } catch (Exception e) {
+                log.debug("Evento SSE da Gemini API ignorado (JSON inválido)");
+                return;
+            }
+            if (root.has("error")) {
+                throw new IllegalStateException("Gemini API falhou no streaming: " + root.path("error").path("message").asText("sem detalhes"));
+            }
+            JsonNode candidate = root.path("candidates").path(0);
+            for (JsonNode part : candidate.path("content").path("parts")) {
+                if (!part.path("thought").asBoolean(false) && part.has("text")) {
+                    String piece = part.path("text").asText("");
+                    if (!piece.isEmpty()) {
+                        text.append(piece);
+                        listener.onDelta(piece);
+                    }
+                }
+            }
+            if (candidate.hasNonNull("finishReason") && !candidate.path("finishReason").asText().isBlank()) {
+                finishReason = candidate.path("finishReason").asText();
+            }
+            JsonNode usage = root.path("usageMetadata");
+            if (!usage.isMissingNode()) {
+                promptTokens = usage.path("promptTokenCount").asInt(promptTokens);
+                // A saída cobrada inclui os tokens de raciocínio (thoughtsTokenCount)
+                completionTokens = usage.path("candidatesTokenCount").asInt(0) + usage.path("thoughtsTokenCount").asInt(0);
+            }
+        }
+    }
+
+    private static Map<String, Object> buildBody(LLMRequest request) {
+        Map<String, Object> body = new HashMap<>();
+        if (request.getSystemPrompt() != null) {
+            body.put("systemInstruction", Map.of("parts", List.of(Map.of("text", request.getSystemPrompt()))));
+        }
+        body.put("contents", List.of(Map.of("role", "user", "parts", List.of(Map.of("text", request.getUserPrompt())))));
+        // Nos modelos Gemini 3.x/4 o Google recomenda não enviar temperature/top_p
+        // (os padrões do modelo são calibrados com o raciocínio interno).
+        Map<String, Object> genConfig = new HashMap<>();
+        if (request.getMaxTokens() != null) {
+            genConfig.put("maxOutputTokens", request.getMaxTokens());
+        }
+        if (request.isJsonMode()) {
+            genConfig.put("responseMimeType", "application/json");
+        }
+        body.put("generationConfig", genConfig);
+        return body;
+    }
+
+    /**
+     * Junta o texto das partes do primeiro candidato, ignorando partes de raciocínio
+     * ({@code "thought": true}) que os modelos Gemini 3.x/4 podem incluir antes da resposta.
+     */
+    public static String extractCandidateText(JsonNode root) {
+        StringBuilder text = new StringBuilder();
+        for (JsonNode part : root.path("candidates").path(0).path("content").path("parts")) {
+            if (!part.path("thought").asBoolean(false) && part.has("text")) {
+                text.append(part.path("text").asText());
+            }
+        }
+        return text.toString().trim();
     }
 
     private LLMResponse generateMockResponse(LLMRequest request, long startTime) {
         long latency = Math.max(System.currentTimeMillis() - startTime, 120L);
         String userPrompt = request.getUserPrompt() != null ? request.getUserPrompt() : "";
+
+        if (request.getSystemPrompt() != null && request.getSystemPrompt().startsWith(COPILOT_PROMPT_MARKER)) {
+            return LLMResponse.builder()
+                    .providerName(getProviderName())
+                    .modelName("simulacao-local")
+                    .content(buildCopilotSimulation(userPrompt))
+                    .promptTokens(0)
+                    .completionTokens(0)
+                    .totalTokens(0)
+                    .estimatedCostUsd(BigDecimal.ZERO)
+                    .latencyMs(latency)
+                    .build();
+        }
 
         if (request.isJsonMode()) {
             String jsonContent = buildContextualJsonAnalysis(userPrompt);
@@ -248,9 +386,15 @@ public class GeminiLlmProvider implements LLMProvider {
                         || lower.contains("fechado");
 
                 if (isQuestion) {
-                    String answerToDisplay = technicalAnswer != null
-                            ? technicalAnswer
-                            : fetchWikipediaSummaryPtBr(speech);
+                    String kbAnswer = answerFromKnowledgeBase(userPrompt, speech);
+                    String answerToDisplay;
+                    if (kbAnswer != null && (technicalAnswer == null || isPersonalQuestion(speech))) {
+                        answerToDisplay = kbAnswer;
+                    } else if (technicalAnswer != null) {
+                        answerToDisplay = kbAnswer != null ? technicalAnswer + "\n\n" + kbAnswer : technicalAnswer;
+                    } else {
+                        answerToDisplay = buildStructuredTechnicalFallback(speech);
+                    }
                     if (answerToDisplay == null || answerToDisplay.isBlank()) {
                         answerToDisplay = buildStructuredTechnicalFallback(speech);
                     }
@@ -328,19 +472,20 @@ public class GeminiLlmProvider implements LLMProvider {
             question = userPrompt.substring(qIdx + "PERGUNTA DO USUÁRIO:".length()).trim();
         }
 
-        // Verifica primeiro se a pergunta do usuário (ou a última fala da reunião) é uma questão técnica
+        // Perguntas sobre o candidato ou cobertas pelo material enviado usam a Base de Conhecimento
+        String kbAnswer = answerFromKnowledgeBase(userPrompt, question);
         String techFromQuestion = solveTechnicalQuestion(question);
+        if (kbAnswer != null && (techFromQuestion == null || isPersonalQuestion(question))) {
+            return kbAnswer;
+        }
+
+        // Verifica se a pergunta do usuário (ou a última fala da reunião) é uma questão técnica
         if (techFromQuestion != null) {
-            return techFromQuestion;
+            return kbAnswer != null ? techFromQuestion + "\n\n" + kbAnswer : techFromQuestion;
         }
         String techFromContext = solveTechnicalQuestion(context);
         if (techFromContext != null && (question.toLowerCase().contains("responda") || question.toLowerCase().contains("pergunta") || question.toLowerCase().contains("ajude") || question.toLowerCase().contains("explique"))) {
             return techFromContext;
-        }
-
-        String wikiFallback = fetchWikipediaSummaryPtBr(question);
-        if (wikiFallback != null) {
-            return wikiFallback;
         }
 
         if (context.isBlank() || context.contains("Nenhum trecho relevante localizado")) {
@@ -387,7 +532,7 @@ public class GeminiLlmProvider implements LLMProvider {
             return """
                 💡 RESPOSTA SUGERIDA (Polimorfismo):
                 Polimorfismo é o pilar da Orientação a Objetos que permite que objetos de classes diferentes respondam à mesma chamada de método de maneiras específicas:
-                • Polimorfismo de Sobrescrita (Override / Runtime): Uma subclasse ou implementação de interface redefine um método da superclasse/interface (ex: diferentes provedores `GeminiLlmProvider` e `OpenAiLlmProvider` implementando `LLMProvider.generateCompletion()`).
+                • Polimorfismo de Sobrescrita (Override / Runtime): Uma subclasse ou implementação de interface redefine um método da superclasse/interface (ex: diferentes provedores `GeminiLlmProvider` e `GrokLlmProvider` implementando `LLMProvider.generateCompletion()`).
                 • Polimorfismo de Sobrecarga (Overload / Compile-time): Métodos com o mesmo nome na mesma classe, mas com assinaturas/parâmetros diferentes.
                 • Vantagem prática: Elimina blocos `if/else` ou `switch` gigantes, permitindo trocar ou adicionar novas implementações sem alterar a classe cliente (Princípio Aberto-Fechado do SOLID).""";
         }
@@ -520,7 +665,7 @@ public class GeminiLlmProvider implements LLMProvider {
         if (lower.contains("design pattern") || lower.contains("padrões de projeto") || lower.contains("padroes de projeto") || lower.contains("strategy") || lower.contains("factory") || lower.contains("singleton")) {
             return """
                 💡 RESPOSTA SUGERIDA (Design Patterns GoF mais usados):
-                • Strategy (Comportamental): Define uma família de algoritmos intercambiáveis (ex: escolher dinamicamente entre Gemini, OpenAI ou Claude via interface `LLMProvider`).
+                • Strategy (Comportamental): Define uma família de algoritmos intercambiáveis (ex: escolher dinamicamente entre Gemini, Grok ou Claude via interface `LLMProvider`).
                 • Factory / Builder (Criacional): Encapsula a criação de objetos complexos de forma legível e segura.
                 • Observer / Pub-Sub (Comportamental): Notifica múltiplos interessados quando um evento ocorre (ex: eventos de transcrição acionando indexação vetorial e extração de insights).
                 • Circuit Breaker / Decorator: Protege chamadas externas contra falhas em cascata.""";
@@ -569,47 +714,213 @@ public class GeminiLlmProvider implements LLMProvider {
         return null;
     }
 
-    private String fetchWikipediaSummaryPtBr(String rawQuery) {
-        if (rawQuery == null || rawQuery.isBlank()) return null;
-        try {
-            String cleaned = rawQuery.toLowerCase()
-                    .replaceAll("(?i)(explique|para mim|o que é|o que e|por que|porque|qual a diferença entre|qual a diferenca entre|qual a|quais|me fale sobre|fale sobre|conceito de|responda|pergunta|entrevistador|:|\\?|!|\\.)", " ")
-                    .replaceAll("\\s+", " ")
-                    .trim();
-            if (cleaned.length() < 3) return null;
+    // ------------------------------------------------------------------
+    // Base de Conhecimento no modo de simulação (sem API Key)
+    // ------------------------------------------------------------------
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", "MeetIntelligenceCopilot/1.0 (https://github.com/franciscoaraujo/meet-intelligence)");
-            HttpEntity<Void> reqEntity = new HttpEntity<>(headers);
+    private static final java.util.regex.Pattern KB_DOCUMENT = java.util.regex.Pattern.compile(
+            "<document tipo=\"([^\"]*)\" arquivo=\"([^\"]*)\">\\n(.*?)\\n</document>", java.util.regex.Pattern.DOTALL);
 
-            String searchUrl = "https://pt.wikipedia.org/w/api.php?action=query&list=search&srsearch="
-                    + java.net.URLEncoder.encode(cleaned, java.nio.charset.StandardCharsets.UTF_8)
-                    + "&utf8=1&format=json&srlimit=1";
+    static boolean isPersonalQuestion(String text) {
+        if (text == null) return false;
+        String lower = java.text.Normalizer.normalize(text.toLowerCase(), java.text.Normalizer.Form.NFD)
+                .replaceAll("\\p{M}", "");
+        return lower.contains("voce") || lower.contains("sua experiencia") || lower.contains("seu curriculo")
+                || lower.contains("curriculo") || lower.contains("se apresente") || lower.contains("apresente-se")
+                || lower.contains("trajetoria") || lower.contains("carreira") || lower.contains("trabalhou")
+                || lower.contains("seus projetos") || lower.contains("seu projeto") || lower.contains("sua formacao")
+                || lower.contains("pontos fortes") || lower.contains("por que devemos");
+    }
 
-            ResponseEntity<String> searchRes = restTemplate.exchange(searchUrl, org.springframework.http.HttpMethod.GET, reqEntity, String.class);
-            if (searchRes.getStatusCode().is2xxSuccessful() && searchRes.getBody() != null) {
-                JsonNode searchRoot = objectMapper.readTree(searchRes.getBody());
-                JsonNode searchArr = searchRoot.path("query").path("search");
-                if (searchArr.isArray() && !searchArr.isEmpty()) {
-                    String pageTitle = searchArr.get(0).path("title").asText("");
-                    if (!pageTitle.isBlank()) {
-                        String summaryUrl = "https://pt.wikipedia.org/api/rest_v1/page/summary/"
-                                + java.net.URLEncoder.encode(pageTitle.replace(" ", "_"), java.nio.charset.StandardCharsets.UTF_8);
-                        ResponseEntity<String> sumRes = restTemplate.exchange(summaryUrl, org.springframework.http.HttpMethod.GET, reqEntity, String.class);
-                        if (sumRes.getStatusCode().is2xxSuccessful() && sumRes.getBody() != null) {
-                            JsonNode sumRoot = objectMapper.readTree(sumRes.getBody());
-                            String extract = sumRoot.path("extract").asText("").trim();
-                            if (!extract.isBlank()) {
-                                return "💡 RESPOSTA SUGERIDA (" + pageTitle + "):\n" + extract;
-                            }
-                        }
-                    }
+    /**
+     * Monta uma resposta a partir do bloco &lt;knowledge_base&gt; do prompt, sem LLM.
+     * Seleciona as frases do currículo e os trechos do material de referência mais
+     * relacionados à pergunta; perguntas pessoais priorizam o currículo, perguntas
+     * técnicas priorizam o material. Retorna null se nada for relevante.
+     */
+    String answerFromKnowledgeBase(String prompt, String question) {
+        if (prompt == null || question == null || question.isBlank()) return null;
+        int start = prompt.indexOf("<knowledge_base>");
+        int end = prompt.indexOf("</knowledge_base>");
+        if (start == -1 || end <= start) return null;
+        String kb = prompt.substring(start, end);
+
+        Set<String> stems = TextRelevance.queryStems(question);
+        boolean personal = isPersonalQuestion(question);
+
+        List<ScoredText> resumeHits = new java.util.ArrayList<>();
+        List<ScoredText> referenceHits = new java.util.ArrayList<>();
+        String resumeSummary = null;
+
+        java.util.regex.Matcher m = KB_DOCUMENT.matcher(kb);
+        while (m.find()) {
+            boolean isResume = m.group(1).startsWith("CURRÍCULO");
+            String body = isResume
+                    ? TextRelevance.stripContactInfo(m.group(3)).replaceAll("(?i)p[aá]gina \\d+ de \\d+", "")
+                    : m.group(3);
+            List<String> sentences = TextRelevance.sentences(body, isResume ? 320 : 450);
+            if (isResume && resumeSummary == null) resumeSummary = profileSummary(sentences);
+            for (int i = 0; i < sentences.size(); i++) {
+                double score = TextRelevance.score(sentences.get(i), stems);
+                if (score <= 0) continue;
+                if (isResume) {
+                    resumeHits.add(new ScoredText(score, i, sentences.get(i)));
+                } else {
+                    // Para o material, leva a frase relevante e a seguinte para dar contexto
+                    String passage = sentences.get(i) + (i + 1 < sentences.size() ? " " + sentences.get(i + 1) : "");
+                    referenceHits.add(new ScoredText(score, i, passage));
                 }
             }
-        } catch (Exception e) {
-            log.debug("Fallback Wikipedia não retornou para '{}': {}", rawQuery, e.getMessage());
         }
-        return null;
+
+        // Pergunta geral sobre o candidato ("fale sobre você", "sua trajetória"): resumo do perfil
+        if (personal && isGeneralProfileQuestion(stems) && resumeSummary != null) {
+            return "💡 RESPOSTA SUGERIDA (com base no seu currículo):\n" + resumeSummary
+                    + "\n\n(Modo simulação: trechos selecionados dos seus documentos. Configure uma API Key de IA para uma resposta redigida.)";
+        }
+
+        List<ScoredText> topResume = top(resumeHits, 4, true);
+        List<ScoredText> topReference = top(referenceHits, 2, false);
+
+        String resumeBlock = null;
+        if (!topResume.isEmpty()) {
+            StringBuilder sb = new StringBuilder(personal
+                    ? "💡 RESPOSTA SUGERIDA (com base no seu currículo):\n"
+                    : "💼 Exemplos da sua experiência (currículo):\n");
+            topResume.forEach(t -> sb.append("• ").append(t.text()).append("\n"));
+            resumeBlock = sb.toString().trim();
+        } else if (personal && topReference.isEmpty() && resumeSummary != null) {
+            resumeBlock = "💡 RESPOSTA SUGERIDA (com base no seu currículo):\n" + resumeSummary;
+        }
+
+        String referenceBlock = null;
+        if (!topReference.isEmpty()) {
+            StringBuilder sb = new StringBuilder("📚 Do seu material de referência:\n");
+            topReference.forEach(t -> sb.append("• ").append(t.text()).append("\n"));
+            referenceBlock = sb.toString().trim();
+        }
+
+        if (resumeBlock == null && referenceBlock == null) return null;
+
+        List<String> parts = new java.util.ArrayList<>();
+        if (personal) {
+            if (resumeBlock != null) parts.add(resumeBlock);
+            if (referenceBlock != null) parts.add(referenceBlock);
+        } else {
+            if (referenceBlock != null) parts.add(referenceBlock);
+            if (resumeBlock != null) parts.add(resumeBlock);
+        }
+        parts.add("(Modo simulação: trechos selecionados dos seus documentos. Configure uma API Key de IA para uma resposta redigida.)");
+        return String.join("\n\n", parts);
+    }
+
+    private static final Set<String> GENERAL_PROFILE_STEMS = Set.of(
+            "profis", "trajet", "carrei", "aprese", "mesmo", "perfil", "curric", "pouco", "histor");
+
+    /** Verdadeiro quando a pergunta não cita nenhum tema específico além de termos de perfil. */
+    private static boolean isGeneralProfileQuestion(Set<String> stems) {
+        return GENERAL_PROFILE_STEMS.containsAll(stems);
+    }
+
+    private record ScoredText(double score, int position, String text) {}
+
+    /** Seleciona os n melhores, sem duplicatas; opcionalmente reordena pela posição no documento. */
+    private static List<ScoredText> top(List<ScoredText> hits, int n, boolean documentOrder) {
+        List<ScoredText> sorted = new java.util.ArrayList<>(hits);
+        sorted.sort((a, b) -> Double.compare(b.score(), a.score()));
+        List<ScoredText> result = new java.util.ArrayList<>();
+        Set<String> seen = new java.util.HashSet<>();
+        for (ScoredText t : sorted) {
+            if (result.size() >= n) break;
+            if (seen.add(t.text())) result.add(t);
+        }
+        if (documentOrder) result.sort(java.util.Comparator.comparingInt(ScoredText::position));
+        return result;
+    }
+
+    /** Resumo do perfil: as frases após o título "PERFIL"/"RESUMO", ou o início do currículo. */
+    private static String profileSummary(List<String> sentences) {
+        int startIdx = 0;
+        for (int i = 0; i < sentences.size(); i++) {
+            String n = TextRelevance.normalize(sentences.get(i));
+            if (n.contains("perfil") || n.contains("resumo profissional") || n.contains("sobre mim")) {
+                startIdx = i;
+                break;
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = startIdx; i < sentences.size() && sb.length() < 900; i++) {
+            String sentence = sentences.get(i);
+            if (i == startIdx) {
+                int at = TextRelevance.normalize(sentence).indexOf("perfil");
+                if (at > 0) sentence = sentence.substring(at);
+            }
+            sb.append(sentence).append(' ');
+        }
+        return sb.toString().trim();
+    }
+
+    /** Prefixo da primeira linha do prompt do copiloto (prompts/interview-answer.v1.md e v2.md). */
+    static final String COPILOT_PROMPT_MARKER = "INTERVIEW_COPILOT_V";
+
+    /**
+     * Resposta simulada do copiloto (sem chave de IA): monta o contrato JSON a partir das respostas
+     * técnicas locais e da Base de Conhecimento, com "simulated": true. Nenhuma chamada externa.
+     */
+    String buildCopilotSimulation(String userPrompt) {
+        String question = "";
+        int qStart = userPrompt.indexOf("<question");
+        int qEnd = userPrompt.indexOf("</question>");
+        if (qStart != -1 && qEnd > qStart) {
+            question = userPrompt.substring(userPrompt.indexOf('>', qStart) + 1, qEnd).trim();
+        }
+        String tech = solveTechnicalQuestion(question);
+        String kb = answerFromKnowledgeBase(userPrompt, question);
+        String technicalText = tech != null ? cleanSimulationText(tech) : cleanSimulationText(buildStructuredTechnicalFallback(question));
+        String resumeText = kb != null ? cleanSimulationText(kb) : null;
+
+        String spoken = limitWords(isPersonalQuestion(question) && resumeText != null
+                ? resumeText + " " + technicalText : technicalText + (resumeText != null ? " " + resumeText : ""), 130);
+        String firstSentence = technicalText.split("(?<=[.!?])\\s+")[0];
+
+        Map<String, Object> sections = new HashMap<>();
+        sections.put("direct_answer", firstSentence);
+        sections.put("technical_explanation", technicalText);
+        sections.put("practical_example", resumeText != null ? resumeText
+                : "Exemplo: aplicar o conceito num serviço Spring Boot e validar o comportamento com testes automatizados.");
+        sections.put("trade_offs", "Avalie custo de complexidade, desempenho e manutenção antes de adotar a solução.");
+
+        // Ordem dos campos igual à do prompt v2: spoken_answer logo no início, para sair primeiro no streaming
+        Map<String, Object> root = new java.util.LinkedHashMap<>();
+        root.put("is_question_for_candidate", true);
+        root.put("spoken_answer", spoken);
+        root.put("depth", "INTERMEDIATE");
+        root.put("sections", sections);
+        root.put("resume_facts_used", resumeText != null ? List.of(limitWords(resumeText, 40)) : List.of());
+        root.put("assumptions", List.of("Resposta gerada pela simulação local, sem modelo de IA. Configure uma API Key para respostas redigidas."));
+        root.put("confidence", 0.5);
+        root.put("simulated", true);
+        try {
+            return objectMapper.writeValueAsString(root);
+        } catch (Exception e) {
+            return "{\"is_question_for_candidate\":false,\"simulated\":true}";
+        }
+    }
+
+    /** Remove cabeçalhos com emoji e marcadores das respostas locais, deixando texto corrido. */
+    private static String cleanSimulationText(String text) {
+        if (text == null) return "";
+        return text.replaceAll("(?m)^[^\\p{L}\\p{N}(]*RESPOSTA SUGERIDA[^\\n]*\\n?", "")
+                .replaceAll("(?m)^\\(Modo simulação[^\\n]*\\)\\s*$", "")
+                .replaceAll("[•📚💡💼❓]", "")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private static String limitWords(String text, int max) {
+        String[] words = text.trim().split("\\s+");
+        if (words.length <= max) return text.trim();
+        return String.join(" ", java.util.Arrays.copyOf(words, max)) + "…";
     }
 
     private String buildStructuredTechnicalFallback(String question) {

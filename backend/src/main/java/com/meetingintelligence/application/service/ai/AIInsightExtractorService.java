@@ -36,6 +36,7 @@ public class AIInsightExtractorService {
     private final TranscriptChunkRepository chunkRepository;
     private final ObjectMapper objectMapper;
     private final SimpMessagingTemplate messagingTemplate;
+    private final KnowledgeBaseService knowledgeBaseService;
 
     @Async
     @Transactional
@@ -56,10 +57,12 @@ public class AIInsightExtractorService {
 
         // 2. Monta os prompts
         String systemPrompt = promptManagerService.buildSystemPrompt(meeting);
+        String knowledgeContext = buildKnowledgeContext(meeting, chunk);
         String userPrompt = promptManagerService.buildIncrementalAnalysisUserPrompt(
                 chunk,
                 summary.getExecutiveSummary(),
-                summary.getCurrentContext()
+                summary.getCurrentContext(),
+                knowledgeContext
         );
 
         LLMRequest request = LLMRequest.builder()
@@ -74,11 +77,14 @@ public class AIInsightExtractorService {
             LLMResponse response = aiOrchestrator.execute(request, meeting, "INCREMENTAL_INSIGHTS");
 
             // 4. Interpreta a resposta estruturada em JSON
-            parseAndPersistInsights(meeting, chunk, response.getContent(), summary);
+            boolean parsed = parseAndPersistInsights(meeting, chunk, response.getContent(), summary);
 
-            // 5. Marca o chunk como processado
-            chunk.setProcessedByAi(true);
-            chunkRepository.save(chunk);
+            // 5. Só marca o bloco como processado se a resposta foi interpretada; senão ele fica
+            //    pendente e é reprocessado em "Consolidar com IA"/fim da reunião (P-13)
+            if (parsed) {
+                chunk.setProcessedByAi(true);
+                chunkRepository.save(chunk);
+            }
 
         } catch (Exception e) {
             log.error("Erro durante extração de insights por IA no chunk #{}: {}",
@@ -86,7 +92,17 @@ public class AIInsightExtractorService {
         }
     }
 
-    private void parseAndPersistInsights(
+    private String buildKnowledgeContext(Meeting meeting, TranscriptChunk chunk) {
+        if (knowledgeBaseService == null || meeting.getOrganization() == null) return "";
+        try {
+            return knowledgeBaseService.buildContext(meeting.getOrganization().getId(), chunk.getTextContent());
+        } catch (Exception e) {
+            log.warn("Falha ao montar contexto da Base de Conhecimento: {}", e.getMessage());
+            return "";
+        }
+    }
+
+    private boolean parseAndPersistInsights(
             Meeting meeting,
             TranscriptChunk chunk,
             String jsonContent,
@@ -127,6 +143,10 @@ public class AIInsightExtractorService {
                         category = InsightCategory.CONTENT_ANALYSIS;
                     }
 
+                    if (category == InsightCategory.QUESTION) {
+                        // Perguntas são respondidas só pelo copiloto dedicado (spec 004, RF-10), evitando cards duplicados
+                        continue;
+                    }
                     String title = node.path("title").asText("Insight Identificado");
                     String desc = node.path("description").asText("");
                     String speakerRef = node.path("speaker_reference").asText(null);
@@ -165,6 +185,7 @@ public class AIInsightExtractorService {
                                 .startTimeMs(chunk.getStartTimeMs())
                                 .endTimeMs(chunk.getEndTimeMs())
                                 .confidence(BigDecimal.valueOf(conf))
+                                .chunkId(chunk.getId())
                                 .build();
                     }
 
@@ -208,8 +229,11 @@ public class AIInsightExtractorService {
                 }
             }
 
+            return true;
         } catch (Exception e) {
-            log.error("Falha ao analisar JSON retornado pelo LLM: {}", e.getMessage(), e);
+            log.error("Falha ao interpretar o JSON retornado pelo LLM no bloco {}: {}", chunk.getChunkIndex(),
+                    e.getClass().getSimpleName());
+            return false;
         }
     }
 }

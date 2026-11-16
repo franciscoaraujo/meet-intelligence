@@ -109,7 +109,7 @@ class MeetingMinutesServiceTest {
                         .endTimeMs(3000L)
                         .build()
         );
-        when(transcriptRepository.findByMeetingIdOrderByStartTimeMsAsc(meetingId)).thenReturn(segments);
+        when(transcriptRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId)).thenReturn(segments);
 
         // Executa geração da ata
         MeetingMinutesDto minutes = minutesService.generateMinutes(meetingId);

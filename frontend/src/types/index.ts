@@ -26,6 +26,8 @@ export interface Meeting {
   googleCalendarEventId?: string;
   captureMechanism: CaptureMechanism;
   language: string;
+  /** Papel do usuário na entrevista (spec 003). */
+  userInterviewRole?: 'CANDIDATE' | 'INTERVIEWER';
   createdAt: string;
 }
 
@@ -50,6 +52,27 @@ export interface TranscriptSegment {
   startTimeMs: number;
   endTimeMs: number;
   confidence?: number;
+  /** Instante real em que a fala foi registrada no servidor; ausente em itens otimistas recém-criados. */
+  createdAt?: string;
+  /** Provedor que transcreveu (GEMINI, DEEPGRAM, OPENAI_TRANSCRIBE, WEB_SPEECH...). */
+  source?: string;
+  /** Origem do áudio (spec 002/003). */
+  audioSource?: 'TAB' | 'MIC' | 'UPLOAD' | 'MANUAL';
+  captureStartMs?: number;
+  captureEndMs?: number;
+  /** Quem falou (spec 003): o próprio usuário, participante remoto ou sem evidência. */
+  speakerRole?: 'SELF' | 'REMOTE' | 'UNKNOWN';
+  speakerConfidence?: number;
+}
+
+/** Resposta do POST /transcripts/chunk (spec 002). */
+export interface ChunkTranscriptionResponse {
+  status: 'TRANSCRIBED' | 'NO_SPEECH' | 'FAILED' | 'PROCESSING';
+  provider?: string;
+  segments: TranscriptSegment[];
+  attempts?: { provider: string; outcome: string; reason?: string; latencyMs: number }[];
+  failureReason?: string;
+  duplicate: boolean;
 }
 
 export interface AIInsight {
@@ -61,6 +84,28 @@ export interface AIInsight {
   startTimeMs?: number;
   endTimeMs?: number;
   speakerReference?: string;
+  createdAt: string;
+  /** Pergunta que originou o insight (copiloto, spec 004/005). */
+  questionId?: string;
+  /** JSON com a resposta estruturada do copiloto. */
+  metadata?: string;
+}
+
+/** Pergunta detectada na entrevista (spec 005). */
+export interface InterviewQuestion {
+  id: string;
+  meetingId: string;
+  status: 'DETECTED' | 'ANSWERING' | 'ANSWERED' | 'FAILED' | 'DISMISSED';
+  questionText: string;
+  utteranceType: string;
+  score: number;
+  autoAnswer: boolean;
+  sourceSegmentIds: string[];
+  captureStartMs?: number;
+  captureEndMs?: number;
+  answerInsightId?: string;
+  answerVersion: number;
+  failureReason?: string;
   createdAt: string;
 }
 

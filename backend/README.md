@@ -18,7 +18,8 @@ Módulo de Backend da plataforma **Meet Intelligence**, construído com **Java 2
 - **`service/ai/`**:
   - `AIOrchestrator`: Roteador dinâmico entre provedores de IA com suporte a chave própria do cliente (BYOK) e Circuit Breaker Resilience4j.
   - `GeminiLlmProvider`: Integração REST nativa com Google Gemini API.
-  - `OpenAiLlmProvider`: Integração REST nativa com OpenAI Chat Completions & Embeddings API.
+  - `GrokLlmProvider`: Integração REST com a xAI Responses API (`POST /v1/responses`).
+  - `OpenAiEmbeddingProvider`: Embeddings da OpenAI para a busca semântica (pgvector).
   - `ClaudeLlmProvider`: Integração REST nativa com Anthropic Messages API (`v1/messages`).
 - **`domain/` & `repository/`**: Entidades JPA multi-tenant e repositórios com consultas vetoriais nativas (`<=>` distância de cosseno no PostgreSQL `pgvector`).
 
@@ -27,7 +28,7 @@ Módulo de Backend da plataforma **Meet Intelligence**, construído com **Java 2
 ## 🗄️ Migrações Flyway (`src/main/resources/db/migration`)
 
 - **`V1__init_schema.sql`**: Criação da extensão `vector`, tabelas multi-tenant (`organizations`, `users`, `meetings`, `recordings`, `transcript_segments`, `ai_insights`, `meeting_embeddings` com índice HNSW, etc.).
-- **`V2__organization_ai_configs.sql`**: Tabela `organization_ai_configs` para armazenamento isolado das credenciais BYOK (Gemini, OpenAI e Claude) por tenant.
+- **`V2__organization_ai_configs.sql`**: Tabela `organization_ai_configs` para armazenamento isolado das credenciais BYOK por tenant (hoje Gemini, Grok e Claude; ver `V6__replace_openai_chat_with_grok.sql`).
 
 ---
 

@@ -58,6 +58,18 @@ public class AIInsight {
     @Column(columnDefinition = "JSONB")
     private String metadata;
 
+    /** Pergunta que originou este insight (resposta do copiloto, spec 004/005). */
+    @Column(name = "question_id")
+    private java.util.UUID questionId;
+
+    /** Bloco de transcrição que originou o insight (análise incremental). */
+    @Column(name = "chunk_id")
+    private java.util.UUID chunkId;
+
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.ARRAY)
+    @Column(name = "source_segment_ids", columnDefinition = "uuid[]")
+    private java.util.UUID[] sourceSegmentIds;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;

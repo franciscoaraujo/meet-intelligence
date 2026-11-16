@@ -54,6 +54,9 @@ class AIInsightExtractorServiceTest {
     @Mock
     private SimpMessagingTemplate messagingTemplate;
 
+    @Mock
+    private com.meetingintelligence.application.service.ai.KnowledgeBaseService knowledgeBaseService;
+
     @InjectMocks
     private AIInsightExtractorService insightExtractorService;
 
@@ -109,7 +112,7 @@ class AIInsightExtractorServiceTest {
 
         LLMResponse llmResponse = LLMResponse.builder()
                 .providerName("GEMINI")
-                .modelName("gemini-1.5-flash")
+                .modelName("gemini-3.5-flash-lite")
                 .content(mockJsonResponse)
                 .promptTokens(150)
                 .completionTokens(120)

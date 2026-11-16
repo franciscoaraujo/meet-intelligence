@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useReducer, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic,
+  MonitorSpeaker,
   Square,
   Search,
   Upload,
@@ -19,18 +20,55 @@ import {
   Award,
   RefreshCw,
   ChevronRight,
-  ArrowLeft
+  ArrowLeft,
+  Target,
+  Languages
 } from 'lucide-react';
 import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
-import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary } from '../types';
+import { Meeting, TranscriptSegment, AIInsight, ChatMessage, MeetingSummary, ChunkTranscriptionResponse, InterviewQuestion } from '../types';
+import { InterviewAnswerCard } from '../components/copilot/InterviewAnswerCard';
+import { copilotStreamReducer, isDraftActive, type CopilotStreamEvent } from '../features/copilot/copilotStream';
+import type { CopilotTranslation } from '../features/copilot/copilotAnswer';
+import { TranscriptItem, type TranscriptItemActions } from '../components/live/TranscriptItem';
+import { InterviewModeLayout } from '../components/live/InterviewModeLayout';
+import { mergeById, upsertById } from '../features/live/mergeById';
+import { useStickToBottom } from '../features/live/useStickToBottom';
+import { loadInterviewModePreference, saveInterviewModePreference } from '../features/live/interviewMode';
+import { INTERVIEW_LANGUAGES, saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
+import { useCaptureSession } from '../features/capture/useCaptureSession';
+import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
+import { manualSpeakerOptions, segmentSpeakerView, type SpeakerRole } from '../features/transcription/speaker';
+import { useAuth } from '../context/AuthContext';
+
+/**
+ * Ordena a transcrição da fala mais antiga para a mais nova.
+ *
+ * Usa createdAt (instante real do registro no servidor) porque startTimeMs vem de relógios
+ * diferentes (cronômetro da página para o microfone, contagem de segmentos para o áudio da
+ * aba do Meet) e reinicia quando a página é recarregada. startTimeMs serve só de desempate.
+ * Itens sem createdAt (exibição otimista, ainda não confirmada) vão para o fim; o sort é
+ * estável, então entre eles a ordem de chegada é preservada.
+ */
+export const sortTranscriptsChronologically = (segments: TranscriptSegment[]): TranscriptSegment[] => {
+  const timeOf = (s: TranscriptSegment) => {
+    const t = s.createdAt ? Date.parse(s.createdAt) : NaN;
+    return Number.isNaN(t) ? Number.POSITIVE_INFINITY : t;
+  };
+  return [...segments].sort((a, b) => {
+    const ta = timeOf(a);
+    const tb = timeOf(b);
+    if (ta !== tb) return ta < tb ? -1 : 1;
+    if (ta === Number.POSITIVE_INFINITY) return 0;
+    return (a.startTimeMs ?? 0) - (b.startTimeMs ?? 0);
+  });
+};
 
 export const LiveMeetingPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
 
   const [meeting, setMeeting] = useState<Meeting | null>(null);
-  const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [searchTerm, setSearchTerm] = useState('');
   const [wsConnected, setWsConnected] = useState(false);
@@ -44,31 +82,32 @@ export const LiveMeetingPage: React.FC = () => {
   const [highlightedTimeMs, setHighlightedTimeMs] = useState<number | null>(null);
 
   const [insights, setInsights] = useState<AIInsight[]>([]);
+  const insightsRef = useRef<AIInsight[]>([]);
+  insightsRef.current = insights;
+  // Resposta do copiloto chegando em partes, por pergunta (spec 008)
+  const [copilotDrafts, dispatchCopilot] = useReducer(copilotStreamReducer, {});
+  // Carregamento inicial: esqueletos em vez de listas vazias (spec 008, RF-13)
+  const [initialLoading, setInitialLoading] = useState(true);
+  // Modo entrevista (spec 008, RF-14/RF-15): null até a reunião carregar e a preferência ser lida
+  const [interviewMode, setInterviewMode] = useState<boolean | null>(null);
+  const [transcriptExpanded, setTranscriptExpanded] = useState(false);
+  const [systemAudioNoticeDismissed, setSystemAudioNoticeDismissed] = useState(false);
+  // "Pergunta terminou": aguardando a pergunta manual ser registrada (retorno visual no botão)
+  const [manualPending, setManualPending] = useState(false);
+  const manualPendingTimer = useRef<number | null>(null);
+  const [questions, setQuestions] = useState<InterviewQuestion[]>([]);
   const [summary, setSummary] = useState<MeetingSummary | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [chatLoading, setChatLoading] = useState(false);
 
-  // Estados de captura de voz ao vivo (Web Speech API + Áudio da Guia do Meet) e envio direto de falas
-  const [interimTranscript, setInterimTranscript] = useState('');
-  const [micStatus, setMicStatus] = useState<string>('');
-  const [tabAudioActive, setTabAudioActive] = useState<boolean>(false);
-  const [tabAudioLevel, setTabAudioLevel] = useState<number>(0);
+  // Estados de captura de voz ao vivo (Web Speech API + áudio do computador) e envio direto de falas
   const [manualSpeechInput, setManualSpeechInput] = useState('');
-  const [speakerRole, setSpeakerRole] = useState('Francisco Araújo');
-  const speakerRoleRef = useRef<string>('Francisco Araújo');
-  const recognitionRef = useRef<any>(null);
-  const isRecordingRef = useRef<boolean>(false);
+  const { user } = useAuth();
+  const speakerOptions = manualSpeakerOptions(user?.fullName);
+  const [speakerRole, setSpeakerRole] = useState(speakerOptions[0].label);
+  const speakerRoleRef = useRef<string>(speakerOptions[0].label);
   const recordingSecondsRef = useRef<number>(0);
-  const micStreamRef = useRef<MediaStream | null>(null);
-  const tabStreamRef = useRef<MediaStream | null>(null);
-  const tabAudioCtxRef = useRef<AudioContext | null>(null);
-  const tabIntervalRef = useRef<number | null>(null);
-  const lastTabVoiceMsRef = useRef<number>(0);
-  const interimRef = useRef<string>('');
-  const speechBufferRef = useRef<string>('');
-  const speechBufferSpeakerRef = useRef<string>('Francisco Araújo');
-  const speechFlushTimerRef = useRef<number | null>(null);
 
   // Tabs do Painel Central
   const [activeTab, setActiveTab] = useState<'insights' | 'summary' | 'tasks' | 'decisions'>('insights');
@@ -80,6 +119,34 @@ export const LiveMeetingPage: React.FC = () => {
   const chatEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Sessão de captura (spec 001/009): áudio do computador (aba ou tela inteira) e microfone como fontes independentes
+  const capture = useCaptureSession({
+    sendChunk: async (payload) =>
+      (await api.post<ChunkTranscriptionResponse>(`/meetings/${id}/transcripts/chunk`, payload)).data,
+    onTranscribed: (segments) => {
+      setTranscripts((prev) => {
+        let next = [...prev];
+        for (const seg of segments) {
+          next = next.some((s) => s.id === seg.id) ? next.map((s) => (s.id === seg.id ? seg : s)) : [...next, seg];
+        }
+        return next;
+      });
+      if (id) setTimeout(() => refreshAiState(id), 1000);
+    },
+    onWebSpeechText: (text) => {
+      // Web Speech: fala do microfone, atribuída ao usuário pelo backend (spec 003)
+      void sendLiveSpeechSegment(text, speakerOptions[0].label, 'MIC', 'SELF');
+    },
+    micSpeakerLabel: () => speakerRoleRef.current,
+    // Spec 008 RF-20: no modo entrevista só o participante remoto é capturado
+    micBlocked: interviewMode === true,
+    // Spec 011: idioma da entrevista também no microfone em modo navegador
+    language: toInterviewLanguage(meeting?.language),
+  });
+  const isRecording = capture.isRecording;
+  const interimTranscript = capture.interim;
+  const tabCaptureOn = capture.tab.state !== 'INATIVA';
+
   useEffect(() => {
     if (id) {
       loadMeetingData(id);
@@ -87,25 +154,32 @@ export const LiveMeetingPage: React.FC = () => {
       const wsService = new MeetingWebSocketService(
         id,
         (newSegment) => {
-          setTranscripts((prev) => {
-            if (prev.some((s) => s.id === newSegment.id)) {
-              return prev.map((s) => (s.id === newSegment.id ? newSegment : s));
-            }
-            return [...prev, newSegment];
-          });
+          setTranscripts((prev) => upsertById(prev, newSegment, 'end'));
         },
         (newInsight) => {
-          setInsights((prev) => {
-            if (prev.some((i) => i.id === newInsight.id)) {
-              return prev.map((i) => (i.id === newInsight.id ? newInsight : i));
-            }
-            return [newInsight, ...prev];
-          });
+          setInsights((prev) => upsertById(prev, newInsight, 'start'));
         },
         (newSummary) => {
           setSummary(newSummary);
         },
-        (connected) => setWsConnected(connected)
+        (connected) => {
+          setWsConnected(connected);
+          // Ao (re)conectar, recupera eventos que possam ter sido perdidos durante a queda
+          if (connected) refreshAiState(id);
+        },
+        (question) => {
+          setQuestions((prev) => upsertById(prev, question, 'end'));
+          if (question.utteranceType === 'MANUAL_TRIGGER') setManualPending(false);
+        },
+        (event: CopilotStreamEvent) => {
+          dispatchCopilot(event);
+          // O COMPLETED não traz a resposta: ela chega por /insights. Se não chegar em 2 s, busca por REST.
+          if (event.type === 'COMPLETED' && event.insightId) {
+            window.setTimeout(() => {
+              if (!insightsRef.current.some((i) => i.id === event.insightId)) void refreshAiState(id);
+            }, 2000);
+          }
+        }
       );
       wsService.connect();
 
@@ -129,12 +203,6 @@ export const LiveMeetingPage: React.FC = () => {
       clearInterval(timerRef.current);
     }
   }, [isRecording]);
-
-  useEffect(() => {
-    if (transcriptContainerRef.current) {
-      transcriptContainerRef.current.scrollTop = transcriptContainerRef.current.scrollHeight;
-    }
-  }, [transcripts]);
 
   useEffect(() => {
     if (chatContainerRef.current) {
@@ -171,18 +239,26 @@ export const LiveMeetingPage: React.FC = () => {
       }
     } catch (error) {
       console.error('Erro ao carregar dados da reunião:', error);
+    } finally {
+      setInitialLoading(false);
     }
   };
 
   const refreshAiState = async (meetingId: string) => {
     try {
-      const [insightsRes, summaryRes, transcriptsRes] = await Promise.allSettled([
+      const [insightsRes, summaryRes, transcriptsRes, questionsRes] = await Promise.allSettled([
         api.get(`/meetings/${meetingId}/insights`),
         api.get(`/meetings/${meetingId}/summary`),
         api.get(`/meetings/${meetingId}/transcripts`),
+        api.get<InterviewQuestion[]>(`/meetings/${meetingId}/questions`),
       ]);
+      if (questionsRes.status === 'fulfilled' && Array.isArray(questionsRes.value.data)) {
+        const serverQuestions: InterviewQuestion[] = questionsRes.value.data;
+        setQuestions((prev) => mergeById(prev, serverQuestions));
+      }
       if (insightsRes.status === 'fulfilled' && Array.isArray(insightsRes.value.data)) {
-        setInsights(insightsRes.value.data);
+        const serverInsights: AIInsight[] = insightsRes.value.data;
+        setInsights((prev) => mergeById(prev, serverInsights));
       }
       if (summaryRes.status === 'fulfilled' && summaryRes.value.data) {
         setSummary(summaryRes.value.data);
@@ -191,7 +267,8 @@ export const LiveMeetingPage: React.FC = () => {
         setTranscripts((prev) => {
           const serverItems: TranscriptSegment[] = transcriptsRes.value.data;
           const tempItems = prev.filter((item) => String(item.id).startsWith('temp-'));
-          return [...serverItems, ...tempItems];
+          // Mescla por id (spec 008, RF-10): falas sem mudança mantêm o mesmo objeto e não são re-renderizadas
+          return mergeById(prev, [...serverItems, ...tempItems]);
         });
       }
     } catch (e) {
@@ -203,11 +280,16 @@ export const LiveMeetingPage: React.FC = () => {
     if (!id) return;
     const syncTimer = window.setInterval(() => {
       refreshAiState(id);
-    }, 4500);
+    }, 30000); // rede de segurança: o tempo real vem do WebSocket (P-18)
     return () => clearInterval(syncTimer);
   }, [id]);
 
-  const sendLiveSpeechSegment = async (text: string, speaker = speakerRole) => {
+  const sendLiveSpeechSegment = async (
+    text: string,
+    speaker = speakerRole,
+    audioSource: 'MIC' | 'MANUAL' = 'MANUAL',
+    role: SpeakerRole = speakerOptions.find((o) => o.label === speaker)?.role ?? 'UNKNOWN',
+  ) => {
     if (!id || !text.trim()) return;
     const cleanText = text.trim();
     const startMs = recordingSecondsRef.current * 1000;
@@ -222,12 +304,16 @@ export const LiveMeetingPage: React.FC = () => {
       startTimeMs: startMs,
       endTimeMs: startMs + 4000,
       confidence: 0.99,
+      audioSource,
+      speakerRole: role,
     };
     setTranscripts((prev) => [...prev, optimisticSegment]);
 
     try {
       const res = await api.post(`/meetings/${id}/transcripts/live-text`, {
         speakerLabel: speaker,
+        speakerRole: role,
+        audioSource,
         text: cleanText,
         startTimeMs: startMs,
         endTimeMs: startMs + 4000,
@@ -252,377 +338,78 @@ export const LiveMeetingPage: React.FC = () => {
     setSpeakerRole(role);
   };
 
-  const encodePcmToWavBase64 = (chunks: Float32Array[], sampleRate: number): string => {
-    let totalLength = 0;
-    for (const c of chunks) totalLength += c.length;
-
-    const buffer = new ArrayBuffer(44 + totalLength * 2);
-    const view = new DataView(buffer);
-
-    const writeString = (offset: number, str: string) => {
-      for (let i = 0; i < str.length; i++) {
-        view.setUint8(offset + i, str.charCodeAt(i));
-      }
-    };
-
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + totalLength * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true); // PCM chunk size
-    view.setUint16(20, 1, true); // PCM format = 1
-    view.setUint16(22, 1, true); // Mono = 1 channel
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * 2, true); // Byte rate
-    view.setUint16(32, 2, true); // Block align
-    view.setUint16(34, 16, true); // 16-bit
-    writeString(36, 'data');
-    view.setUint32(40, totalLength * 2, true);
-
-    let offset = 44;
-    for (const chunk of chunks) {
-      for (let i = 0; i < chunk.length; i++, offset += 2) {
-        const s = Math.max(-1, Math.min(1, chunk[i]));
-        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-      }
-    }
-
-    const bytes = new Uint8Array(buffer);
-    let binary = '';
-    const chunkSize = 0x8000;
-    for (let i = 0; i < bytes.length; i += chunkSize) {
-      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)));
-    }
-    return window.btoa(binary);
-  };
-
-  const startTabAudioCapture = async () => {
-    if (!id) return;
-    try {
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: true,
-        audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: true,
-        } as any,
-      });
-
-      tabStreamRef.current = displayStream;
-      const audioTracks = displayStream.getAudioTracks();
-
-      if (audioTracks.length === 0) {
-        alert(
-          'Atenção: Você precisa marcar a caixinha "Compartilhar também o áudio da guia" (Share tab audio) ao selecionar a aba do Google Meet para capturar a voz do entrevistador na outra máquina.'
-        );
-      } else {
-        setTabAudioActive(true);
-        const audioOnlyStream = new MediaStream(audioTracks);
-        const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-        const audioCtx: AudioContext = new AudioCtx({ sampleRate: 16000 });
-        tabAudioCtxRef.current = audioCtx;
-
-        const source = audioCtx.createMediaStreamSource(audioOnlyStream);
-        const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-        const zeroGain = audioCtx.createGain();
-        zeroGain.gain.value = 0;
-
-        let pcmChunks: Float32Array[] = [];
-        let hasVoiceInWindow = false;
-
-        processor.onaudioprocess = (e) => {
-          const input = e.inputBuffer.getChannelData(0);
-          let sumSq = 0;
-          for (let i = 0; i < input.length; i++) {
-            sumSq += input[i] * input[i];
-          }
-          const rms = Math.sqrt(sumSq / input.length);
-          const pct = Math.min(100, Math.round(rms * 350));
-          setTabAudioLevel(pct);
-
-          if (rms > 0.008) {
-            hasVoiceInWindow = true;
-            lastTabVoiceMsRef.current = Date.now();
-          }
-          pcmChunks.push(new Float32Array(input));
-        };
-
-        source.connect(processor);
-        processor.connect(zeroGain);
-        zeroGain.connect(audioCtx.destination);
-
-        let isSendingWav = false;
-        const flushTabWavChunk = async () => {
-          if (!tabStreamRef.current || audioOnlyStream.getAudioTracks()[0]?.readyState !== 'live') {
-            setTabAudioActive(false);
-            setTabAudioLevel(0);
-            return;
-          }
-          if (isSendingWav) return;
-          if (!hasVoiceInWindow) {
-            if (pcmChunks.length > 10) pcmChunks = pcmChunks.slice(-6);
-            return;
-          }
-
-          // Aguarda a pessoa terminar a frase (1.5s de silêncio após falar) ou limite máximo de ~11s contínuos
-          const silenceAfterVoiceMs = Date.now() - lastTabVoiceMsRef.current;
-          const reachedMaxBuffer = pcmChunks.length >= 44;
-          if (silenceAfterVoiceMs < 1500 && !reachedMaxBuffer) {
-            return;
-          }
-
-          const chunksToSend = pcmChunks;
-          pcmChunks = [];
-          hasVoiceInWindow = false;
-          isSendingWav = true;
-
-          try {
-            const base64Audio = encodePcmToWavBase64(chunksToSend, audioCtx.sampleRate);
-            const res = await api.post(`/meetings/${id}/transcripts/chunk`, {
-              base64Audio,
-              mimeType: 'audio/wav',
-            });
-            if (Array.isArray(res.data) && res.data.length > 0) {
-              setTranscripts((prev) => {
-                let next = [...prev];
-                for (const seg of res.data) {
-                  if (next.some((s) => s.id === seg.id)) {
-                    next = next.map((s) => (s.id === seg.id ? seg : s));
-                  } else {
-                    next.push(seg);
-                  }
-                }
-                return next;
-              });
-              setTimeout(() => refreshAiState(id), 1000);
-            }
-          } catch (err) {
-            console.warn('Erro ao enviar chunk WAV da guia:', err);
-          } finally {
-            isSendingWav = false;
-          }
-        };
-
-        tabIntervalRef.current = window.setInterval(flushTabWavChunk, 800);
-      }
-
-      displayStream.getVideoTracks()[0].onended = () => {
-        setTabAudioActive(false);
-        setTabAudioLevel(0);
-        if (tabIntervalRef.current) clearInterval(tabIntervalRef.current);
-        if (tabAudioCtxRef.current) {
-          tabAudioCtxRef.current.close().catch(() => {});
-          tabAudioCtxRef.current = null;
-        }
-      };
-
-      // Garante que o SpeechRecognition do microfone continue ativo após fechar o modal de compartilhamento
-      if (isRecordingRef.current) {
-        setTimeout(() => startBrowserSpeechRecognition(), 300);
-      }
-    } catch (err) {
-      console.warn('Compartilhamento de guia cancelado:', err);
-      if (isRecordingRef.current) {
-        setTimeout(() => startBrowserSpeechRecognition(), 300);
-      }
-    }
-  };
   const handleManualSpeechSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!manualSpeechInput.trim()) return;
     const text = manualSpeechInput;
     setManualSpeechInput('');
-    await sendLiveSpeechSegment(text, speakerRoleRef.current);
+    await sendLiveSpeechSegment(text, speakerRoleRef.current, 'MANUAL');
   };
 
-  const resolveActiveSpeaker = (): string => {
-    // Se a guia do Google Meet emitiu voz nos últimos 2.4 segundos, a fala veio da outra máquina (Entrevistador)
-    if (Date.now() - lastTabVoiceMsRef.current < 2400) {
-      return 'Entrevistador (Google Meet)';
-    }
-    return speakerRoleRef.current;
-  };
-
-  const scheduleSpeechBufferFlush = (delayMs = 2200) => {
-    if (speechFlushTimerRef.current) {
-      window.clearTimeout(speechFlushTimerRef.current);
-      speechFlushTimerRef.current = null;
-    }
-    speechFlushTimerRef.current = window.setTimeout(() => {
-      // Se a pessoa ainda estiver no meio de uma palavra (interim ativo), aguarda mais 1.1s para não cortar a frase
-      if (interimRef.current && interimRef.current.trim().length > 0) {
-        scheduleSpeechBufferFlush(1100);
-        return;
-      }
-      const fullSentence = speechBufferRef.current.trim();
-      if (fullSentence.length > 0) {
-        speechBufferRef.current = '';
-        setInterimTranscript('');
-        sendLiveSpeechSegment(fullSentence, speechBufferSpeakerRef.current);
-      }
-    }, delayMs);
-  };
-
-  const startBrowserSpeechRecognition = () => {
-    const SpeechRecognition =
-      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setMicStatus('Navegador sem suporte a Web Speech API (use Google Chrome ou Edge).');
-      return;
-    }
-
+  /**
+   * "Pergunta terminou" (spec 005 RF-09, revisto): o candidato sinaliza que o entrevistador terminou de
+   * perguntar; a fala desde a pergunta anterior vai para o copiloto, que identifica a pergunta e responde.
+   */
+  const answerLatestQuestion = async () => {
+    if (!id || manualPending) return;
+    setManualPending(true);
+    if (manualPendingTimer.current) window.clearTimeout(manualPendingTimer.current);
+    // Sem retorno do WebSocket em 8 s, libera o botão (a pergunta ainda pode chegar pela ressincronização)
+    manualPendingTimer.current = window.setTimeout(() => setManualPending(false), 8000);
     try {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.onend = null;
-          recognitionRef.current.stop();
-        } catch (e) {}
-      }
+      await api.post(`/meetings/${id}/questions/answer-latest`);
+    } catch (e) {
+      console.error('Erro ao acionar o copiloto:', e);
+      setManualPending(false);
+    }
+  };
 
-      const recognition = new SpeechRecognition();
-      recognition.lang = 'pt-BR';
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.maxAlternatives = 1;
+  /** Spec 012: tradução do card do copiloto (gravada no card na primeira vez). */
+  const translateAnswer = async (questionId: string, language: string): Promise<CopilotTranslation> => {
+    const res = await api.post<CopilotTranslation>(`/meetings/${id}/questions/${questionId}/translate?language=${language}`);
+    return res.data;
+  };
 
-      recognition.onstart = () => {
-        setMicStatus(
-          'Microfone ativo (aguarda pausa de 2.2s para consolidar a pergunta inteira sem partir)...'
-        );
-      };
+  const regenerateAnswer = async (questionId: string) => {
+    if (!id) return;
+    setQuestions((prev) => prev.map((q) => (q.id === questionId ? { ...q, status: 'ANSWERING' } : q)));
+    await api.post(`/meetings/${id}/questions/${questionId}/answer`).catch((e) => console.error('Erro ao gerar resposta:', e));
+  };
 
-      recognition.onresult = (event: any) => {
-        let interim = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          const transcriptPiece = event.results[i][0].transcript;
-          if (event.results[i].isFinal) {
-            const cleanPiece = transcriptPiece.trim();
-            if (cleanPiece) {
-              speechBufferSpeakerRef.current = resolveActiveSpeaker();
-              speechBufferRef.current = speechBufferRef.current
-                ? `${speechBufferRef.current} ${cleanPiece}`
-                : cleanPiece;
-            }
-            interimRef.current = '';
-          } else {
-            interim += transcriptPiece;
-          }
-        }
-        interimRef.current = interim;
-        const combinedPreview = [speechBufferRef.current, interim.trim()].filter(Boolean).join(' ').trim();
-        setInterimTranscript(combinedPreview);
+  const dismissQuestion = async (questionId: string) => {
+    if (!id) return;
+    try {
+      const res = await api.post<InterviewQuestion>(`/meetings/${id}/questions/${questionId}/dismiss`);
+      setQuestions((prev) => prev.map((q) => (q.id === questionId ? res.data : q)));
+      setInsights((prev) => prev.filter((i) => i.questionId !== questionId));
+    } catch (e) {
+      console.error('Erro ao descartar pergunta:', e);
+    }
+  };
 
-        if (combinedPreview.length > 0) {
-          scheduleSpeechBufferFlush(2200);
-        }
-      };
-
-      recognition.onerror = (event: any) => {
-        console.warn('Evento SpeechRecognition:', event.error);
-        if (event.error === 'not-allowed') {
-          setMicStatus('Permissão de microfone negada no navegador. Libere o cadeado ao lado da URL.');
-        } else if (event.error === 'no-speech') {
-          setMicStatus('Escuta ativa — aguardando fala do entrevistador ou sua...');
-        }
-      };
-
-      // Reinicia automaticamente a escuta contínua sem quebrar frases em andamento
-      recognition.onend = () => {
-        if (interimRef.current && interimRef.current.trim()) {
-          const pending = interimRef.current.trim();
-          interimRef.current = '';
-          speechBufferSpeakerRef.current = resolveActiveSpeaker();
-          speechBufferRef.current = speechBufferRef.current
-            ? `${speechBufferRef.current} ${pending}`
-            : pending;
-          setInterimTranscript(speechBufferRef.current);
-          scheduleSpeechBufferFlush(1800);
-        }
-        if (isRecordingRef.current) {
-          setTimeout(() => {
-            if (isRecordingRef.current) {
-              try {
-                recognition.start();
-              } catch (e) {}
-            }
-          }, 150);
-        }
-      };
-
-      recognition.start();
-      recognitionRef.current = recognition;
-    } catch (err) {
-      console.warn('Reconhecimento de voz nativo não iniciado:', err);
+  /** Papel do usuário na entrevista (spec 003, RF-04). */
+  const updateInterviewRole = async (role: 'CANDIDATE' | 'INTERVIEWER') => {
+    if (!id) return;
+    try {
+      const res = await api.patch<Meeting>(`/meetings/${id}/interview-role?role=${role}`);
+      setMeeting(res.data);
+    } catch (e) {
+      console.error('Erro ao atualizar papel na entrevista:', e);
     }
   };
 
   const toggleRecording = async () => {
-    if (!isRecording) {
-      try {
-        // Desativa echoCancellation para que o microfone também capte a voz do entrevistador saindo na caixa de som do PC
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-          const micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              echoCancellation: false,
-              noiseSuppression: false,
-              autoGainControl: true,
-            },
-          });
-          micStreamRef.current = micStream;
-        }
-      } catch (micErr) {
-        console.warn('Aviso ao solicitar getUserMedia:', micErr);
-      }
-
+    if (!capture.isRecording) {
       await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`).catch(() => {});
-      isRecordingRef.current = true;
-      setIsRecording(true);
-      startBrowserSpeechRecognition();
+      await capture.startRecording();
     } else {
-      stopRecording();
+      await stopRecording();
     }
   };
 
+  /** Encerra todas as fontes (enviando os trechos pendentes) e consolida a reunião com IA. */
   const stopRecording = async () => {
-    isRecordingRef.current = false;
-    setIsRecording(false);
-    setTabAudioActive(false);
-    setTabAudioLevel(0);
-    if (speechFlushTimerRef.current) {
-      window.clearTimeout(speechFlushTimerRef.current);
-      speechFlushTimerRef.current = null;
-    }
-    const finalBuffered = [speechBufferRef.current, interimRef.current].filter(Boolean).join(' ').trim();
-    speechBufferRef.current = '';
-    interimRef.current = '';
-    setInterimTranscript('');
-    setMicStatus('');
-    if (finalBuffered) {
-      sendLiveSpeechSegment(finalBuffered, speechBufferSpeakerRef.current);
-    }
-    if (tabIntervalRef.current) {
-      clearInterval(tabIntervalRef.current);
-      tabIntervalRef.current = null;
-    }
-    if (tabAudioCtxRef.current) {
-      tabAudioCtxRef.current.close().catch(() => {});
-      tabAudioCtxRef.current = null;
-    }
-    if (tabStreamRef.current) {
-      tabStreamRef.current.getTracks().forEach((t) => t.stop());
-      tabStreamRef.current = null;
-    }
-    if (recognitionRef.current) {
-      try {
-        recognitionRef.current.onend = null;
-        recognitionRef.current.stop();
-      } catch (e) {}
-      recognitionRef.current = null;
-    }
-    if (micStreamRef.current) {
-      micStreamRef.current.getTracks().forEach((t) => t.stop());
-      micStreamRef.current = null;
-    }
+    await capture.stopRecording();
     if (id) {
       await api.patch(`/meetings/${id}/status?status=COMPLETED`).catch(() => {});
       triggerAiAnalysis();
@@ -633,12 +420,6 @@ export const LiveMeetingPage: React.FC = () => {
     if (!id || analyzing) return;
     try {
       setAnalyzing(true);
-      if (interimRef.current && interimRef.current.trim()) {
-        const pending = interimRef.current.trim();
-        interimRef.current = '';
-        setInterimTranscript('');
-        await sendLiveSpeechSegment(pending, speakerRoleRef.current);
-      }
       await api.post(`/meetings/${id}/insights/trigger`);
       setTimeout(() => refreshAiState(id), 1200);
     } catch (err) {
@@ -782,13 +563,85 @@ export const LiveMeetingPage: React.FC = () => {
 
   const formatMs = (ms: number) => formatTime(Math.floor(ms / 1000));
 
-  const filteredTranscripts = transcripts.filter((t) => {
+  // Ações da linha da transcrição com referência estável: o React.memo do TranscriptItem só
+  // re-renderiza a fala que mudou (spec 008, RF-10). Os handlers reais são lidos no clique.
+  const transcriptHandlers = useRef<TranscriptItemActions | null>(null);
+  transcriptHandlers.current = {
+    askAi: (text) => void askAiToAnswerQuestion(text),
+    startEdit: (segment) => {
+      setEditingSegmentId(segment.id);
+      setEditText(segment.correctedText || segment.originalText);
+    },
+    cancelEdit: () => setEditingSegmentId(null),
+    saveEdit: (segmentId) => void saveCorrection(segmentId),
+    setEditText,
+    formatMs,
+  };
+  const transcriptActions = useMemo<TranscriptItemActions>(
+    () => ({
+      askAi: (text) => transcriptHandlers.current?.askAi(text),
+      startEdit: (segment) => transcriptHandlers.current?.startEdit(segment),
+      cancelEdit: () => transcriptHandlers.current?.cancelEdit(),
+      saveEdit: (segmentId) => transcriptHandlers.current?.saveEdit(segmentId),
+      setEditText: (text) => transcriptHandlers.current?.setEditText(text),
+      formatMs: (ms) => transcriptHandlers.current?.formatMs(ms) ?? '',
+    }),
+    []
+  );
+
+  // Modo entrevista: escolha salva no navegador; sem escolha, ativo quando o usuário é o candidato
+  useEffect(() => {
+    if (meeting && interviewMode === null) setInterviewMode(loadInterviewModePreference(meeting.userInterviewRole));
+  }, [meeting, interviewMode]);
+
+  /** Spec 011: idioma da entrevista (transcrição, detecção de perguntas e respostas do copiloto). */
+  const [languageError, setLanguageError] = useState<string | null>(null);
+  const changeLanguage = async (tag: InterviewLanguageTag) => {
+    if (!id) return;
+    setLanguageError(null);
+    saveLanguagePreference(tag);
+    try {
+      const res = await api.patch<Meeting>(`/meetings/${id}/language?language=${tag}`);
+      setMeeting(res.data);
+    } catch (e) {
+      console.error('Erro ao trocar o idioma:', e);
+      setLanguageError('Não foi possível trocar o idioma.');
+    }
+  };
+
+  const toggleInterviewMode = () => {
+    const next = !interviewMode;
+    saveInterviewModePreference(next);
+    setInterviewMode(next);
+    setTranscriptExpanded(false);
+  };
+
+
+  // Ordem cronológica: da fala mais antiga para a mais nova (pelo horário real de registro).
+  // Itens ainda sem createdAt (otimistas ou recém-chegados) ficam no fim, na ordem de chegada.
+  const chronologicalTranscripts = sortTranscriptsChronologically(transcripts);
+
+  const filteredTranscripts = chronologicalTranscripts.filter((t) => {
     const text = t.correctedText || t.originalText;
     return text.toLowerCase().includes(searchTerm.toLowerCase());
   });
 
   const taskInsights = insights.filter((i) => i.category === 'TASK');
   const decisionInsights = insights.filter((i) => i.category === 'DECISION');
+  // Modo entrevista: só a transcrição recente, salvo se o usuário expandir
+  const visibleTranscripts = interviewMode && !transcriptExpanded && !searchTerm ? filteredTranscripts.slice(-3) : filteredTranscripts;
+  const { newCount: newTranscriptCount, scrollToBottom: scrollTranscriptToBottom } = useStickToBottom(
+    transcriptContainerRef,
+    filteredTranscripts.length,
+    `${visibleTranscripts[visibleTranscripts.length - 1]?.id ?? ''}|${interimTranscript ?? ''}`
+  );
+
+  // Perguntas ainda sem card de resposta gravado: gerando (com ou sem rascunho), falha ou aguardando confirmação
+  const pendingQuestions = questions.filter(
+    (q) =>
+      !q.answerInsightId &&
+      (isDraftActive(copilotDrafts[q.id]) || q.status === 'ANSWERING' || q.status === 'FAILED' || (q.status === 'DETECTED' && !q.autoAnswer))
+  );
 
   return (
     <div className="flex flex-col h-[calc(100vh-76px)] max-h-[calc(100vh-76px)] bg-white overflow-hidden">
@@ -797,7 +650,7 @@ export const LiveMeetingPage: React.FC = () => {
         <div className="flex items-center gap-2">
           <ShieldAlert className="w-3.5 h-3.5 text-[#0b57d0]" />
           <span>
-            <strong>Aviso de Consentimento:</strong> Gravação e análise de IA em tempo real em conformidade com a LGPD.
+            <strong>Aviso de Consentimento:</strong> grave e analise com IA somente com o consentimento de todos os participantes da reunião ou ligação (LGPD).
           </span>
         </div>
         <div className="flex items-center gap-3">
@@ -838,6 +691,34 @@ export const LiveMeetingPage: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-2.5">
+          <label className="flex items-center gap-1.5 text-xs text-[#444746]" title="Idioma da entrevista: captura, perguntas e respostas do copiloto">
+            <Languages className="w-3.5 h-3.5 text-[#0b57d0]" />
+            <select
+              value={toInterviewLanguage(meeting?.language)}
+              onChange={(e) => void changeLanguage(e.target.value as InterviewLanguageTag)}
+              className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f]"
+              aria-label="Idioma da entrevista"
+              data-testid="interview-language"
+            >
+              {INTERVIEW_LANGUAGES.map((l) => (
+                <option key={l.tag} value={l.tag}>
+                  {l.flag} {l.label}
+                </option>
+              ))}
+            </select>
+            {languageError && <span role="alert" className="text-[11px] text-[#b3261e]">{languageError}</span>}
+          </label>
+          <button
+            type="button"
+            onClick={toggleInterviewMode}
+            aria-pressed={!!interviewMode}
+            className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${interviewMode ? '!bg-[#d3e3fd] !border-[#0b57d0] !text-[#041e49]' : ''}`}
+            title="Destaca a pergunta atual e a resposta sugerida"
+            data-testid="interview-mode-toggle"
+          >
+            <Target className="w-3.5 h-3.5" />
+            <span>{interviewMode ? 'Sair do modo entrevista' : 'Modo entrevista'}</span>
+          </button>
           <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*,video/*" className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -849,16 +730,44 @@ export const LiveMeetingPage: React.FC = () => {
           </button>
 
           <button
-            onClick={startTabAudioCapture}
+            onClick={() => (tabCaptureOn ? capture.stopTab() : capture.startTab())}
             className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${
-              tabAudioActive ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
+              tabCaptureOn ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
             }`}
-            title="Compartilhar o áudio interno da aba do Google Meet para capturar a voz do entrevistador mesmo usando fone de ouvido"
+            title={
+              'Captura o som de qualquer fonte do computador (spec 009):\n' +
+              '• Uma aba (Meet, WhatsApp Web, YouTube…): marque "Compartilhar áudio da guia".\n' +
+              '• Todo o som do PC, inclusive apps como WhatsApp, Teams e Zoom: escolha "Tela inteira" e marque "Compartilhar áudio do sistema" (Windows/ChromeOS).\n' +
+              'Janelas não compartilham áudio.'
+            }
+            data-testid="computer-audio-toggle"
           >
             <Volume2 className="w-3.5 h-3.5" />
-            <span>
-              {tabAudioActive ? 'Áudio da Guia Meet Conectado' : 'Capturar Áudio da Guia Meet'}
-            </span>
+            <span>{tabCaptureOn ? 'Parar captura do computador' : 'Capturar áudio do computador'}</span>
+          </button>
+
+          <select
+            value={interviewMode ? 'OFF' : capture.micMode}
+            onChange={(e) => void capture.setMicMode(e.target.value as 'BACKEND' | 'WEB_SPEECH' | 'OFF')}
+            disabled={!!interviewMode}
+            className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f] disabled:opacity-60"
+            title="Como transcrever o seu microfone"
+            aria-label="Modo de transcrição do microfone"
+          >
+            <option value="BACKEND">Microfone: transcrição do servidor</option>
+            <option value="WEB_SPEECH">Microfone: reconhecimento do navegador (Google)</option>
+            <option value="OFF">{interviewMode ? 'Microfone: desligado no modo entrevista' : 'Microfone: desligado (só o participante remoto)'}</option>
+          </select>
+
+          <button
+            onClick={answerLatestQuestion}
+            disabled={manualPending}
+            className="md-btn-tonal !py-1.5 !px-3.5 !text-xs disabled:opacity-70"
+            title="Clique quando o entrevistador terminar de perguntar: o copiloto responde à fala dele desde a pergunta anterior"
+            data-testid="question-finished"
+          >
+            <Sparkles className={`w-3.5 h-3.5 ${manualPending ? 'motion-safe:animate-spin' : ''}`} />
+            <span>{manualPending ? 'Enviando pergunta…' : 'Pergunta terminou'}</span>
           </button>
 
           <button
@@ -902,7 +811,7 @@ export const LiveMeetingPage: React.FC = () => {
       {/* Grid Principal: 3 ÁREAS */}
       <div className="flex-1 grid grid-cols-12 grid-rows-[minmax(0,1fr)] min-h-0 h-full overflow-hidden divide-x divide-[#e0e3e7]">
         {/* ÁREA 1: TRANSCRIÇÃO AO VIVO (5 Colunas) */}
-        <section className="col-span-5 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-white">
+        <section className={`${interviewMode ? 'col-span-4' : 'col-span-5'} flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-white`}>
           <div className="p-3.5 border-b border-[#e0e3e7] flex items-center justify-between gap-3 shrink-0 bg-[#f8fafd]">
             <div className="flex items-center gap-2">
               <Volume2 className="w-4 h-4 text-[#0b57d0]" />
@@ -923,158 +832,132 @@ export const LiveMeetingPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Seletor Rápido de Quem Está Falando Agora */}
+          {/* Papel do usuário nesta entrevista (spec 003, RF-04) */}
           <div className="px-3.5 py-2 border-b border-[#e0e3e7] bg-[#edf2fc]/60 flex items-center justify-between gap-2 shrink-0">
-            <span className="text-[11px] font-medium text-[#444746]">
-              Voz do seu microfone atribuída a:
-            </span>
+            <span className="text-[11px] font-medium text-[#444746]">Seu papel nesta entrevista:</span>
             <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={() => changeSpeakerRole('Francisco Araújo')}
-                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                  speakerRole === 'Francisco Araújo'
-                    ? 'bg-[#0b57d0] text-white shadow-2xs'
-                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
-                }`}
-              >
-                👤 Francisco Araújo (Você)
-              </button>
-              <button
-                type="button"
-                onClick={() => changeSpeakerRole('Entrevistador Técnico')}
-                className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                  speakerRole === 'Entrevistador Técnico'
-                    ? 'bg-[#0b57d0] text-white shadow-2xs'
-                    : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
-                }`}
-              >
-                🎤 Entrevistador
-              </button>
+              {(['CANDIDATE', 'INTERVIEWER'] as const).map((r) => {
+                const selected = (meeting?.userInterviewRole ?? 'CANDIDATE') === r;
+                return (
+                  <button
+                    key={r}
+                    type="button"
+                    onClick={() => updateInterviewRole(r)}
+                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
+                      selected ? 'bg-[#0b57d0] text-white shadow-2xs' : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
+                    }`}
+                  >
+                    {r === 'CANDIDATE' ? 'Candidato' : 'Entrevistador'}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Medidor em Tempo Real do Áudio Vindo da Guia do Google Meet (Outra Máquina) */}
-          {tabAudioActive && (
-            <div className="px-3.5 py-1.5 border-b border-[#c4eed0] bg-[#e6f4ea] flex items-center justify-between gap-3 shrink-0">
-              <span className="text-[11px] font-semibold text-[#137333] flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-[#137333] animate-pulse" />
-                Áudio da Guia Meet (Entrevistador na outra máquina):
+          {/* Estado de cada fonte de áudio (spec 001, RF-04/RF-11) */}
+          {!interviewMode && capture.micMode !== 'OFF' && (isRecording || capture.mic.state !== 'INATIVA') && <SourceStatusBadge kind="MIC" view={capture.mic} />}
+          {tabCaptureOn && (
+            <SourceStatusBadge
+              kind="TAB"
+              view={capture.tab}
+              onRetry={() => capture.startTab()}
+              retryLabel="Compartilhar de novo"
+            />
+          )}
+          {/* Spec 009 RF-05: a tela inteira captura todo o som do PC */}
+          {capture.tab.surface === 'monitor' && tabCaptureOn && !systemAudioNoticeDismissed && (
+            <div role="status" data-testid="system-audio-notice" className="px-3.5 py-1.5 border-b border-[#d3e3fd] bg-[#e8f0fe] text-[11px] text-[#041e49] flex items-center justify-between gap-2 shrink-0">
+              <span>
+                Todo o som do computador está sendo capturado: notificações, músicas e vídeos também serão transcritos.
               </span>
-              <div className="flex items-center gap-2 w-36">
-                <div className="flex-1 h-2 bg-white rounded-full overflow-hidden border border-[#c4eed0]">
-                  <div
-                    className="h-full bg-[#137333] transition-all duration-100"
-                    style={{ width: `${Math.max(4, tabAudioLevel)}%` }}
-                  />
-                </div>
-                <span className="text-[10px] font-mono font-bold text-[#137333] w-8 text-right">
-                  {tabAudioLevel}%
-                </span>
-              </div>
+              <button type="button" onClick={() => setSystemAudioNoticeDismissed(true)} className="font-semibold cursor-pointer">
+                OK
+              </button>
+            </div>
+          )}
+
+          {capture.overlapWarning && (
+            <div role="status" className="px-3.5 py-1.5 border-b border-[#fde293] bg-[#fef7e0] text-[11px] text-[#5f4300] flex items-center justify-between gap-2 shrink-0">
+              <span>
+                Seu microfone está captando a voz da reunião ao mesmo tempo que a aba. Use fone de ouvido para evitar transcrição duplicada.
+              </span>
+              <button type="button" onClick={capture.dismissOverlapWarning} className="font-semibold cursor-pointer">
+                OK
+              </button>
             </div>
           )}
 
           <div ref={transcriptContainerRef} className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
-            {isRecording && micStatus && (
-              <div className="px-3.5 py-2 rounded-xl bg-[#e6f4ea] border border-[#c4eed0] text-[#146c2e] text-xs font-medium flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <span className="w-2 h-2 rounded-full bg-[#146c2e] animate-ping" />
-                  {micStatus}
-                </span>
-                <span className="text-[10px] uppercase font-semibold">PT-BR</span>
+            {initialLoading ? (
+              <div className="space-y-3" aria-busy="true" data-testid="transcript-skeleton">
+                {[0, 1, 2].map((k) => (
+                  <div key={k} className="p-3.5 rounded-2xl border border-[#e0e3e7] bg-[#f8fafd] space-y-2">
+                    <div className="h-2.5 w-1/3 rounded bg-[#e8eaed] motion-safe:animate-pulse" />
+                    <div className="h-2.5 w-11/12 rounded bg-[#e8eaed] motion-safe:animate-pulse" />
+                    <div className="h-2.5 w-8/12 rounded bg-[#e8eaed] motion-safe:animate-pulse" />
+                  </div>
+                ))}
               </div>
-            )}
-            {filteredTranscripts.length === 0 ? (
+            ) : filteredTranscripts.length === 0 ? (
               <div className="text-center py-12 text-[#444746] text-xs">
                 Nenhum áudio transcrito ainda. Inicie a captura ou envie um arquivo de mídia para começar.
               </div>
             ) : (
-              filteredTranscripts.map((segment) => (
-                <div
-                  key={segment.id}
-                  id={`segment-${segment.startTimeMs}`}
-                  className={`p-3.5 rounded-2xl border transition-all space-y-1.5 group ${
-                    highlightedTimeMs === segment.startTimeMs
-                      ? 'bg-[#e8f0fe] border-[#0b57d0] shadow-sm'
-                      : 'bg-[#f8fafd] border-[#e0e3e7] hover:border-[#c4c7c5]'
-                  }`}
+              <>
+              {interviewMode && !searchTerm && filteredTranscripts.length > 3 && (
+                <button
+                  type="button"
+                  onClick={() => setTranscriptExpanded((v) => !v)}
+                  className="w-full text-[11px] font-medium text-[#0b57d0] hover:underline cursor-pointer"
                 >
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-semibold text-[#0b57d0] flex items-center gap-1.5">
-                      <Users className="w-3.5 h-3.5" />
-                      {segment.speakerLabel || 'Participante'}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => askAiToAnswerQuestion(segment.correctedText || segment.originalText)}
-                        className="px-2 py-0.5 rounded-full bg-[#e8f0fe] hover:bg-[#d3e3fd] text-[#0b57d0] text-[10px] font-semibold transition-colors cursor-pointer"
-                        title="Gerar resposta técnica para esta fala no Chat RAG"
-                      >
-                        💡 Responder com IA
-                      </button>
-                      <span className="text-[11px] font-mono text-[#444746]">{formatMs(segment.startTimeMs)}</span>
-                      {editingSegmentId !== segment.id && (
-                        <button
-                          onClick={() => {
-                            setEditingSegmentId(segment.id);
-                            setEditText(segment.correctedText || segment.originalText);
-                          }}
-                          className="opacity-0 group-hover:opacity-100 p-1 text-[#444746] hover:text-[#0b57d0] transition-opacity"
-                        >
-                          <Edit2 className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
-                  </div>
-
-                  {editingSegmentId === segment.id ? (
-                    <div className="mt-2 space-y-2">
-                      <textarea
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        className="md-input bg-white text-xs"
-                        rows={2}
-                      />
-                      <div className="flex justify-end gap-2">
-                        <button
-                          onClick={() => setEditingSegmentId(null)}
-                          className="px-2.5 py-1 text-xs text-[#444746] hover:bg-[#e0e3e7] rounded-full"
-                        >
-                          Cancelar
-                        </button>
-                        <button
-                          onClick={() => saveCorrection(segment.id)}
-                          className="px-3 py-1 text-xs bg-[#0b57d0] text-white font-medium rounded-full flex items-center gap-1"
-                        >
-                          <Check className="w-3 h-3" /> Salvar
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <div>
-                      <p className="text-sm text-[#1f1f1f] leading-relaxed">
-                        {segment.correctedText || segment.originalText}
-                      </p>
-                      {segment.correctedText && (
-                        <p className="text-[10px] text-[#747775] italic mt-0.5">Original: "{segment.originalText}"</p>
-                      )}
-                    </div>
-                  )}
-                </div>
-              ))
+                  {transcriptExpanded ? 'Mostrar só as últimas falas' : `Mostrar todas as ${filteredTranscripts.length} falas`}
+                </button>
+              )}
+              {visibleTranscripts.map((segment) => (
+                <TranscriptItem
+                  key={segment.id}
+                  segment={segment}
+                  highlighted={highlightedTimeMs === segment.startTimeMs}
+                  isEditing={editingSegmentId === segment.id}
+                  editText={editingSegmentId === segment.id ? editText : ''}
+                  actions={transcriptActions}
+                />
+              ))}
+              </>
             )}
-            {interimTranscript && (
-              <div className="p-3.5 rounded-2xl border border-dashed border-[#0b57d0] bg-[#e8f0fe]/60 space-y-1 animate-pulse">
-                <span className="text-[11px] font-semibold text-[#0b57d0] flex items-center gap-1.5">
-                  <Mic className="w-3 h-3" /> Capturando voz do microfone...
+            {/* Spec 008 RF-18: o VAD da aba tem um trecho de fala aberto (a transcrição chega quando ele fechar) */}
+            {capture.tab.speaking && (
+              <div className="mi-enter px-3.5 py-2 rounded-2xl border border-dashed border-[#c4c7c5] bg-[#f8fafd] flex items-center gap-2" role="status" data-testid="remote-speaking">
+                <MonitorSpeaker className="w-3.5 h-3.5 text-[#444746]" />
+                <span className="text-[11px] font-medium text-[#444746]">Participante remoto falando…</span>
+                <span className="ml-auto h-1.5 w-16 rounded-full bg-[#e0e3e7] overflow-hidden" aria-hidden="true">
+                  <span className="block h-full bg-[#0b57d0] transition-[width] duration-100" style={{ width: `${capture.tab.level}%` }} />
                 </span>
-                <p className="text-xs text-[#1f1f1f] italic">{interimTranscript}</p>
+              </div>
+            )}
+            {/* Spec 008 RF-17: texto provisório do microfone, só na tela (nunca enviado como segmento) */}
+            {interimTranscript && (
+              <div className="mi-enter p-3.5 rounded-2xl border border-dashed border-[#a8c7fa] bg-[#e8f0fe]/40 space-y-1" data-testid="mic-interim">
+                <span className="text-[11px] font-semibold text-[#0b57d0] flex items-center gap-1.5">
+                  <Mic className="w-3 h-3" /> Você (falando…)
+                </span>
+                <p className="text-xs text-[#5f6368] italic">{interimTranscript}</p>
               </div>
             )}
             <div ref={transcriptEndRef} />
           </div>
+          {newTranscriptCount > 0 && (
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={scrollTranscriptToBottom}
+                className="absolute -top-11 left-1/2 -translate-x-1/2 px-3 py-1.5 rounded-full bg-[#0b57d0] text-white text-[11px] font-medium shadow-md cursor-pointer"
+                data-testid="new-transcripts"
+              >
+                {newTranscriptCount === 1 ? '1 nova fala ↓' : `${newTranscriptCount} novas falas ↓`}
+              </button>
+            </div>
+          )}
 
           {/* Barra inferior para ditar ou simular falas na reunião e enviar para a IA */}
           <form
@@ -1086,12 +969,14 @@ export const LiveMeetingPage: React.FC = () => {
                 <span>Locutor:</span>
                 <select
                   value={speakerRole}
-                  onChange={(e) => setSpeakerRole(e.target.value)}
+                  onChange={(e) => changeSpeakerRole(e.target.value)}
                   className="bg-white border border-[#c4c7c5] rounded-full px-2.5 py-0.5 text-[11px] font-medium text-[#1f1f1f] focus:outline-none focus:border-[#0b57d0]"
                 >
-                  <option value="Francisco Araújo">Francisco Araújo (Você)</option>
-                  <option value="Entrevistador Técnico">Entrevistador Técnico</option>
-                  <option value="Participante Convidado">Participante Convidado</option>
+                  {speakerOptions.map((o) => (
+                    <option key={o.label} value={o.label}>
+                      {o.role === 'SELF' ? `${o.label} (Você)` : o.label}
+                    </option>
+                  ))}
                 </select>
               </div>
               <span className="text-[10px] text-[#444746]">
@@ -1118,6 +1003,23 @@ export const LiveMeetingPage: React.FC = () => {
           </form>
         </section>
 
+        {interviewMode ? (
+          <section className="col-span-8 h-full max-h-full min-h-0 overflow-hidden bg-[#f8fafd]/60">
+            <InterviewModeLayout
+              questions={questions}
+              insights={insights}
+              drafts={copilotDrafts}
+              formatMs={formatMs}
+              onJump={jumpToTimestamp}
+              onRegenerate={regenerateAnswer}
+              onDismiss={dismissQuestion}
+                        onTranslate={translateAnswer}
+              onAnswerLatest={answerLatestQuestion}
+              manualPending={manualPending}
+            />
+          </section>
+        ) : (
+        <>
         {/* ÁREA 2: AI INSIGHTS AUTOMÁTICOS (4 Colunas) */}
         <section className="col-span-4 flex flex-col h-full max-h-full min-h-0 overflow-hidden bg-[#f8fafd]/60">
           <div className="p-3 border-b border-[#e0e3e7] flex items-center justify-between shrink-0 bg-[#f8fafd]">
@@ -1165,19 +1067,40 @@ export const LiveMeetingPage: React.FC = () => {
           <div className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3">
             {activeTab === 'insights' && (
               <>
-                {insights.length === 0 ? (
+                {insights.length === 0 && pendingQuestions.length === 0 ? (
                   <div className="text-center py-12 text-[#444746] text-xs">
                     Nenhum insight gerado ainda. A IA analisa as falas a cada bloco semântico.
                   </div>
                 ) : (
-                  insights.map((ins) => (
+                  <>
+                  {pendingQuestions.map((q) => (
+                      <InterviewAnswerCard
+                        key={`q-${q.id}`}
+                        question={q}
+                        draft={copilotDrafts[q.id]}
+                        formatMs={formatMs}
+                        onJump={jumpToTimestamp}
+                        onRegenerate={regenerateAnswer}
+                        onDismiss={dismissQuestion}
+                        onTranslate={translateAnswer}
+                      />
+                    ))}
+                  {insights.map((ins) => ins.category === 'QUESTION' ? (
+                    <InterviewAnswerCard
+                      key={ins.id}
+                      insight={ins}
+                      question={questions.find((q) => q.id === ins.questionId)}
+                      draft={ins.questionId ? copilotDrafts[ins.questionId] : undefined}
+                      formatMs={formatMs}
+                      onJump={jumpToTimestamp}
+                      onRegenerate={regenerateAnswer}
+                      onDismiss={dismissQuestion}
+                        onTranslate={translateAnswer}
+                    />
+                  ) : (
                     <div
                       key={ins.id}
-                      className={`p-4 rounded-2xl border space-y-1.5 shadow-2xs ${
-                        ins.category === 'QUESTION'
-                          ? 'bg-[#f0f6ff] border-[#0b57d0]/40'
-                          : 'bg-white border-[#e0e3e7]'
-                      }`}
+                      className="p-4 rounded-2xl border space-y-1.5 shadow-2xs bg-white border-[#e0e3e7]"
                     >
                       <div className="flex items-center justify-between">
                         <span
@@ -1186,12 +1109,10 @@ export const LiveMeetingPage: React.FC = () => {
                               ? 'bg-[#e6f4ea] text-[#137333]'
                               : ins.category === 'TASK'
                               ? 'bg-[#e8f0fe] text-[#1967d2]'
-                              : ins.category === 'QUESTION'
-                              ? 'bg-[#0b57d0] text-white'
                               : 'bg-[#f3e8fd] text-[#6b4ea2]'
                           }`}
                         >
-                          {ins.category === 'QUESTION' ? '🎯 Copiloto — Resposta Técnica' : ins.category}
+                          {ins.category}
                         </span>
                         {ins.startTimeMs && (
                           <button
@@ -1209,7 +1130,8 @@ export const LiveMeetingPage: React.FC = () => {
                         <p className="text-[11px] text-[#747775]">Por: {ins.speakerReference}</p>
                       )}
                     </div>
-                  ))
+                  ))}
+                  </>
                 )}
               </>
             )}
@@ -1381,6 +1303,8 @@ export const LiveMeetingPage: React.FC = () => {
             </button>
           </form>
         </section>
+        </>
+        )}
       </div>
     </div>
   );

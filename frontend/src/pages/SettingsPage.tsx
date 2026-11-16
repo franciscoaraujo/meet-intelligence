@@ -86,13 +86,13 @@ export const SettingsPage: React.FC = () => {
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
 
   // Estados da Configuração de IA (BYOK)
-  const [selectedProvider, setSelectedProvider] = useState<'GEMINI' | 'OPENAI' | 'CLAUDE'>('GEMINI');
+  const [selectedProvider, setSelectedProvider] = useState<'GEMINI' | 'GROK' | 'CLAUDE'>('GEMINI');
   const [geminiKey, setGeminiKey] = useState('');
-  const [geminiModel, setGeminiModel] = useState('gemini-1.5-flash');
-  const [openAiKey, setOpenAiKey] = useState('');
-  const [openAiModel, setOpenAiModel] = useState('gpt-4o-mini');
+  const [geminiModel, setGeminiModel] = useState('gemini-3.5-flash-lite');
+  const [grokKey, setGrokKey] = useState('');
+  const [grokModel, setGrokModel] = useState('grok-4.7');
   const [claudeKey, setClaudeKey] = useState('');
-  const [claudeModel, setClaudeModel] = useState('claude-3-5-sonnet-20241022');
+  const [claudeModel, setClaudeModel] = useState('claude-opus-5-5');
   const [showKeys, setShowKeys] = useState<{ [key: string]: boolean }>({});
   const [testingConnection, setTestingConnection] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{ [key: string]: any }>({});
@@ -117,11 +117,11 @@ export const SettingsPage: React.FC = () => {
         setAiConfig(resAi.data);
         setSelectedProvider(resAi.data.activeProvider || 'GEMINI');
         setGeminiKey(resAi.data.geminiMaskedKey || '');
-        setGeminiModel(resAi.data.geminiModel || 'gemini-1.5-flash');
-        setOpenAiKey(resAi.data.openAiMaskedKey || '');
-        setOpenAiModel(resAi.data.openAiModel || 'gpt-4o-mini');
+        setGeminiModel(resAi.data.geminiModel || 'gemini-3.5-flash-lite');
+        setGrokKey(resAi.data.grokMaskedKey || '');
+        setGrokModel(resAi.data.grokModel || 'grok-4.7');
         setClaudeKey(resAi.data.claudeMaskedKey || '');
-        setClaudeModel(resAi.data.claudeModel || 'claude-3-5-sonnet-20241022');
+        setClaudeModel(resAi.data.claudeModel || 'claude-opus-5-5');
       }
     } catch (err) {
       console.error('Erro ao carregar dados do tenant:', err);
@@ -171,8 +171,8 @@ export const SettingsPage: React.FC = () => {
         activeProvider: selectedProvider,
         geminiApiKey: geminiKey,
         geminiModel,
-        openAiApiKey: openAiKey,
-        openAiModel,
+        grokApiKey: grokKey,
+        grokModel,
         claudeApiKey: claudeKey,
         claudeModel,
         useOrganizationKeys: true,
@@ -188,7 +188,7 @@ export const SettingsPage: React.FC = () => {
     }
   };
 
-  const handleTestConnection = async (provider: 'GEMINI' | 'OPENAI' | 'CLAUDE') => {
+  const handleTestConnection = async (provider: 'GEMINI' | 'GROK' | 'CLAUDE') => {
     try {
       setTestingConnection(provider);
       let keyToTest = '';
@@ -197,9 +197,9 @@ export const SettingsPage: React.FC = () => {
       if (provider === 'GEMINI') {
         keyToTest = geminiKey;
         modelToTest = geminiModel;
-      } else if (provider === 'OPENAI') {
-        keyToTest = openAiKey;
-        modelToTest = openAiModel;
+      } else if (provider === 'GROK') {
+        keyToTest = grokKey;
+        modelToTest = grokModel;
       } else if (provider === 'CLAUDE') {
         keyToTest = claudeKey;
         modelToTest = claudeModel;
@@ -237,7 +237,7 @@ export const SettingsPage: React.FC = () => {
       <div>
         <h1 className="text-2xl font-normal tracking-tight text-[#1f1f1f]">Configurações & Gestão SaaS</h1>
         <p className="text-sm text-[#444746] mt-1">
-          Configure sua própria IA (GPT, Claude ou Gemini), gerencie limites de processamento, membros e governança.
+          Configure sua própria IA (Grok, Claude ou Gemini), gerencie limites de processamento, membros e governança.
         </p>
       </div>
 
@@ -260,7 +260,7 @@ export const SettingsPage: React.FC = () => {
               Escolha e Configure a IA da Sua Empresa
             </h2>
             <p className="text-xs text-[#444746] mt-1">
-              O Meet Intelligence suporta Google Gemini, OpenAI GPT e Anthropic Claude. Configure sua própria chave de API para controle total de privacidade e faturamento.
+              O Meet Intelligence suporta Google Gemini, xAI Grok e Anthropic Claude. Configure sua própria chave de API para controle total de privacidade e faturamento.
             </p>
           </div>
 
@@ -310,11 +310,11 @@ export const SettingsPage: React.FC = () => {
             </div>
           </div>
 
-          {/* CARD 2: OPENAI GPT */}
+          {/* CARD 2: XAI GROK */}
           <div
-            onClick={() => setSelectedProvider('OPENAI')}
+            onClick={() => setSelectedProvider('GROK')}
             className={`p-5 rounded-2xl border cursor-pointer transition-all flex flex-col justify-between ${
-              selectedProvider === 'OPENAI'
+              selectedProvider === 'GROK'
                 ? 'bg-[#e6f4ea] border-[#146c2e] ring-2 ring-[#146c2e]/15'
                 : 'bg-white border-[#e0e3e7] hover:border-[#c4c7c5]'
             }`}
@@ -323,23 +323,23 @@ export const SettingsPage: React.FC = () => {
               <div className="flex items-center justify-between">
                 <span className="font-medium text-sm text-[#1f1f1f] flex items-center gap-2">
                   <span className="w-2.5 h-2.5 rounded-full bg-[#146c2e]"></span>
-                  OpenAI GPT
+                  xAI Grok
                 </span>
-                {selectedProvider === 'OPENAI' && (
+                {selectedProvider === 'GROK' && (
                   <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-[#146c2e] text-white uppercase tracking-wider">
                     IA Ativa
                   </span>
                 )}
               </div>
               <p className="text-xs text-[#444746] mt-2 leading-relaxed">
-                Excelente em identificação de tarefas, raciocínio lógico e extração estrita de dados estruturados.
+                Raciocínio forte e respostas diretas, com bom desempenho em perguntas técnicas e de arquitetura.
               </p>
             </div>
 
             <div className="mt-4 pt-3 border-t border-[#e0e3e7] flex items-center justify-between text-[11px]">
               <span className="text-[#444746]">Status da Chave:</span>
-              <span className={`font-semibold ${aiConfig?.openAiConfigured ? 'text-[#146c2e]' : 'text-[#b06000]'}`}>
-                {aiConfig?.openAiConfigured ? 'Chave do Cliente' : 'Chave Padrão'}
+              <span className={`font-semibold ${aiConfig?.grokConfigured ? 'text-[#146c2e]' : 'text-[#b06000]'}`}>
+                {aiConfig?.grokConfigured ? 'Chave do Cliente' : 'Chave Padrão'}
               </span>
             </div>
           </div>
@@ -424,8 +424,9 @@ export const SettingsPage: React.FC = () => {
                     onChange={(e) => setGeminiModel(e.target.value)}
                     className="md-input bg-white"
                   >
-                    <option value="gemini-1.5-flash">Gemini 1.5 Flash (Ultrarrápido, Recomendado)</option>
-                    <option value="gemini-1.5-pro">Gemini 1.5 Pro (Raciocínio Profundo)</option>
+                    <option value="gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite (Ultrarrápido, menor custo, Recomendado)</option>
+                    <option value="gemini-4-hydrogen">Gemini 4 Hydrogen (Qualidade Superior)</option>
+                    <option value="gemini-3.8-flash">Gemini 3.8 Flash (Equilíbrio entre qualidade e velocidade)</option>
                   </select>
                 </div>
               </div>
@@ -451,52 +452,52 @@ export const SettingsPage: React.FC = () => {
             </div>
           )}
 
-          {/* CONFIGURAÇÃO DA OPENAI */}
-          {selectedProvider === 'OPENAI' && (
+          {/* CONFIGURAÇÃO DO GROK (xAI) */}
+          {selectedProvider === 'GROK' && (
             <div className="p-5 rounded-2xl bg-[#f8fafd] border border-[#e0e3e7] space-y-4">
               <div className="flex items-center justify-between">
                 <h3 className="text-sm font-medium text-[#1f1f1f] flex items-center gap-2">
                   <Key className="w-4 h-4 text-[#146c2e]" />
-                  Credenciais OpenAI GPT
+                  Credenciais xAI Grok
                 </h3>
-                <span className="text-xs text-[#444746]">Obtenha sua chave em platform.openai.com</span>
+                <span className="text-xs text-[#444746]">Obtenha sua chave em console.x.ai</span>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="text-xs font-medium text-[#444746] block mb-1.5">
-                    API Key da OpenAI
+                    API Key da xAI
                   </label>
                   <div className="relative">
                     <input
-                      type={showKeys['OPENAI'] ? 'text' : 'password'}
-                      placeholder="sk-proj-..."
-                      value={openAiKey}
-                      onChange={(e) => setOpenAiKey(e.target.value)}
+                      type={showKeys['GROK'] ? 'text' : 'password'}
+                      placeholder="xai-..."
+                      value={grokKey}
+                      onChange={(e) => setGrokKey(e.target.value)}
                       className="md-input bg-white pr-10"
                     />
                     <button
                       type="button"
-                      onClick={() => toggleShowKey('OPENAI')}
+                      onClick={() => toggleShowKey('GROK')}
                       className="absolute right-3 top-1/2 -translate-y-1/2 text-[#444746] hover:text-[#1f1f1f]"
                     >
-                      {showKeys['OPENAI'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      {showKeys['GROK'] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
                   </div>
                 </div>
 
                 <div>
                   <label className="text-xs font-medium text-[#444746] block mb-1.5">
-                    Modelo GPT
+                    Modelo Grok
                   </label>
                   <select
-                    value={openAiModel}
-                    onChange={(e) => setOpenAiModel(e.target.value)}
+                    value={grokModel}
+                    onChange={(e) => setGrokModel(e.target.value)}
                     className="md-input bg-white"
                   >
-                    <option value="gpt-4o-mini">GPT-4o Mini (Custo Otimizado, Recomendado)</option>
-                    <option value="gpt-4o">GPT-4o (Alta Capacidade Multimodal)</option>
-                    <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                    <option value="grok-4.7">Grok 4.7 (Máxima Capacidade, Recomendado)</option>
+                    <option value="grok-4.3">Grok 4.3 (Menor custo)</option>
+                    <option value="grok-4.20-0309-non-reasoning">Grok 4.20 sem raciocínio (Menor latência)</option>
                   </select>
                 </div>
               </div>
@@ -504,18 +505,18 @@ export const SettingsPage: React.FC = () => {
               <div className="flex items-center justify-between pt-2">
                 <button
                   type="button"
-                  onClick={() => handleTestConnection('OPENAI')}
-                  disabled={testingConnection === 'OPENAI'}
+                  onClick={() => handleTestConnection('GROK')}
+                  disabled={testingConnection === 'GROK'}
                   className="md-btn-tonal"
                 >
                   <Zap className="w-3.5 h-3.5 text-[#0b57d0]" />
-                  {testingConnection === 'OPENAI' ? 'Testando conexão...' : 'Testar Conexão com OpenAI'}
+                  {testingConnection === 'GROK' ? 'Testando conexão...' : 'Testar Conexão com Grok'}
                 </button>
 
-                {testResult['OPENAI'] && (
-                  <div className={`text-xs flex items-center gap-1.5 font-medium ${testResult['OPENAI'].success ? 'text-[#146c2e]' : 'text-[#b3261e]'}`}>
-                    {testResult['OPENAI'].success ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-                    <span>{testResult['OPENAI'].message} ({testResult['OPENAI'].latencyMs}ms)</span>
+                {testResult['GROK'] && (
+                  <div className={`text-xs flex items-center gap-1.5 font-medium ${testResult['GROK'].success ? 'text-[#146c2e]' : 'text-[#b3261e]'}`}>
+                    {testResult['GROK'].success ? <CheckCircle2 className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+                    <span>{testResult['GROK'].message} ({testResult['GROK'].latencyMs}ms)</span>
                   </div>
                 )}
               </div>
@@ -565,8 +566,9 @@ export const SettingsPage: React.FC = () => {
                     onChange={(e) => setClaudeModel(e.target.value)}
                     className="md-input bg-white"
                   >
-                    <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet (Qualidade Superior, Recomendado)</option>
-                    <option value="claude-3-haiku-20240307">Claude 3 Haiku (Baixa Latência)</option>
+                    <option value="claude-opus-5-5">Claude Opus 5.5 (Qualidade Superior, Recomendado)</option>
+                    <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (Equilíbrio entre qualidade e velocidade)</option>
+                    <option value="claude-haiku-5-5">Claude Haiku 5.5 (Baixa Latência, menor custo)</option>
                   </select>
                 </div>
               </div>

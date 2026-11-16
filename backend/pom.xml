@@ -83,6 +83,13 @@
             <version>${pgvector.version}</version>
         </dependency>
 
+        <!-- Extração de texto de PDFs (Base de Conhecimento) -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
         <!-- Object Storage (MinIO / S3) -->
         <dependency>
             <groupId>io.minio</groupId>
@@ -157,10 +164,39 @@
             <artifactId>spring-rabbit-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- Testes de integração com PostgreSQL+pgvector real (H2 não suporta vector, UUID[] e índices parciais) -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- Espera de eventos assíncronos sem sleep -->
+        <dependency>
+            <groupId>org.awaitility</groupId>
+            <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
         <plugins>
+            <!-- Inclui os testes de integração (*IT) no mvn test; sem Docker eles são pulados (Testcontainers) -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <includes>
+                        <include>**/*Test.java</include>
+                        <include>**/*Tests.java</include>
+                        <include>**/*IT.java</include>
+                    </includes>
+                </configuration>
+            </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>

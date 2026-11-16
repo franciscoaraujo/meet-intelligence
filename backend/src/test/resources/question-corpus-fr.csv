@@ -1,0 +1,28 @@
+# Corpus em francês (spec 011) — formato: texto|papel(SELF/REMOTE)|esperado(QUESTION|NOT_QUESTION)
+quelle est la différence entre Kafka et RabbitMQ|REMOTE|QUESTION
+comment concevriez-vous un limiteur de débit pour une API publique|REMOTE|QUESTION
+expliquez les principes SOLID|REMOTE|QUESTION
+parlez-moi d'un projet techniquement complexe que vous avez dirigé|REMOTE|QUESTION
+pouvez-vous expliquer comment vous gérez les transactions distribuées|REMOTE|QUESTION
+pourquoi avez-vous choisi PostgreSQL plutôt que MongoDB|REMOTE|QUESTION
+décrivez le fonctionnement du garbage collector de la JVM|REMOTE|QUESTION
+avez-vous déjà travaillé avec l'event sourcing|REMOTE|QUESTION
+très bien et maintenant comment surveilleriez-vous ce service en production|REMOTE|QUESTION
+d'accord dernière question quelle architecture utiliseriez-vous pour ce module|REMOTE|QUESTION
+alors la question est comment garantiriez-vous l'idempotence des consommateurs|REMOTE|QUESTION
+donnez-moi un exemple de compromis entre cohérence et disponibilité|REMOTE|QUESTION
+qu'est-ce que vous changeriez dans cette architecture|REMOTE|QUESTION
+est-ce que vous préférez un monolithe ou des microservices|REMOTE|QUESTION
+Comment testeriez-vous ce module ?|REMOTE|QUESTION
+# Não são perguntas
+ici nous utilisons Kafka et Spring Boot pour les paiements|REMOTE|NOT_QUESTION
+comme je disais notre système est assez grand|REMOTE|NOT_QUESTION
+d'accord parfait|REMOTE|NOT_QUESTION
+merci c'était une très bonne réponse|REMOTE|NOT_QUESTION
+passons à la partie suivante de l'entretien|REMOTE|NOT_QUESTION
+l'équipe est responsable du service de paiement|REMOTE|NOT_QUESTION
+bonjour ravi de vous rencontrer|REMOTE|NOT_QUESTION
+notre base de données est PostgreSQL sur AWS|REMOTE|NOT_QUESTION
+comme vous l'avez dit la latence est importante|REMOTE|NOT_QUESTION
+# Fala do candidato
+j'ai utilisé le pattern outbox chez OrionPay|SELF|NOT_QUESTION

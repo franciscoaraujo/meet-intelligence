@@ -48,8 +48,10 @@ public class RecordingService {
         // 3. Processa transcrição do áudio
         try {
             byte[] bytes = file.getBytes();
-            transcriptionService.processAudio(meetingId, bytes, file.getContentType(), false);
-            saved.setStatus("READY");
+            var result = transcriptionService.processRecording(meetingId, bytes, file.getContentType());
+            // FAILED: nenhum provedor transcreveu (antes, provedores sem chave gravavam texto simulado como real)
+            saved.setStatus(result.status() == com.meetingintelligence.domain.speech.TranscriptionChainResult.Status.FAILED
+                    ? "ERROR" : "READY");
             recordingRepository.save(saved);
         } catch (Exception e) {
             log.error("Erro ao transcrever arquivo de gravação: {}", e.getMessage(), e);

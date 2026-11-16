@@ -6,20 +6,35 @@
  * utilizando React Router v7 e proteção de rotas autenticadas via JWT.
  * Todas as telas seguem o padrão corporativo Google Material Design 3.
  */
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AppLayout } from './components/layout/AppLayout';
-import { LoginPage } from './pages/LoginPage';
-import { LandingPage } from './pages/LandingPage';
-import { LandingCustomPage } from './pages/LandingCustomPage';
-import { DashboardPage } from './pages/DashboardPage';
-import { CalendarPage } from './pages/CalendarPage';
-import { MeetingsPage } from './pages/MeetingsPage';
-import { LiveMeetingPage } from './pages/LiveMeetingPage';
-import { SummariesPage } from './pages/SummariesPage';
-import { AiProfilesPage } from './pages/AiProfilesPage';
-import { SettingsPage } from './pages/SettingsPage';
+
+/**
+ * Páginas carregadas sob demanda (spec 008, RF-19): o login não baixa o código da sala ao vivo,
+ * e cada tela vira um arquivo separado no build.
+ */
+const lazyPage = <K extends string>(load: () => Promise<Record<K, React.ComponentType>>, name: K) =>
+  lazy(() => load().then((module) => ({ default: module[name] })));
+
+const LoginPage = lazyPage(() => import('./pages/LoginPage'), 'LoginPage');
+const LandingPage = lazyPage(() => import('./pages/LandingPage'), 'LandingPage');
+const LandingCustomPage = lazyPage(() => import('./pages/LandingCustomPage'), 'LandingCustomPage');
+const DashboardPage = lazyPage(() => import('./pages/DashboardPage'), 'DashboardPage');
+const CalendarPage = lazyPage(() => import('./pages/CalendarPage'), 'CalendarPage');
+const MeetingsPage = lazyPage(() => import('./pages/MeetingsPage'), 'MeetingsPage');
+const LiveMeetingPage = lazyPage(() => import('./pages/LiveMeetingPage'), 'LiveMeetingPage');
+const SummariesPage = lazyPage(() => import('./pages/SummariesPage'), 'SummariesPage');
+const AiProfilesPage = lazyPage(() => import('./pages/AiProfilesPage'), 'AiProfilesPage');
+const KnowledgeBasePage = lazyPage(() => import('./pages/KnowledgeBasePage'), 'KnowledgeBasePage');
+const SettingsPage = lazyPage(() => import('./pages/SettingsPage'), 'SettingsPage');
+
+const PageFallback: React.FC = () => (
+  <div className="flex items-center justify-center h-[60vh]" role="status" aria-label="Carregando">
+    <div className="w-6 h-6 rounded-full border-2 border-[#d3e3fd] border-t-[#0b57d0] motion-safe:animate-spin" />
+  </div>
+);
 
 /**
  * Guardião de rotas autenticadas: redireciona usuários sem sessão ativa para /login.
@@ -36,6 +51,7 @@ export const App: React.FC = () => {
   return (
     <BrowserRouter>
       <AuthProvider>
+        <Suspense fallback={<PageFallback />}>
         <Routes>
           {/* Rotas públicas (Landing Pages comerciais + Autenticação) */}
           <Route path="/landing" element={<LandingPage />} />
@@ -56,6 +72,7 @@ export const App: React.FC = () => {
             <Route path="meetings" element={<MeetingsPage />} />
             <Route path="summaries" element={<SummariesPage />} />
             <Route path="ai-profiles" element={<AiProfilesPage />} />
+            <Route path="knowledge" element={<KnowledgeBasePage />} />
             <Route path="settings" element={<SettingsPage />} />
           </Route>
 
@@ -71,6 +88,7 @@ export const App: React.FC = () => {
 
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
+        </Suspense>
       </AuthProvider>
     </BrowserRouter>
   );

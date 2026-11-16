@@ -7,10 +7,12 @@
  *  - /topic/meetings/{id}/transcripts : Novos trechos transcritos (STT)
  *  - /topic/meetings/{id}/insights    : Decisões, tarefas e tópicos detectados pela IA
  *  - /topic/meetings/{id}/summary     : Atualizações incrementais do resumo executivo
+ *  - /topic/meetings/{id}/copilot     : Resposta do copiloto chegando em partes (spec 008)
  */
 import { Client } from '@stomp/stompjs';
 import SockJS from 'sockjs-client';
-import { TranscriptSegment, AIInsight, MeetingSummary } from '../types';
+import { TranscriptSegment, AIInsight, MeetingSummary, InterviewQuestion } from '../types';
+import type { CopilotStreamEvent } from '../features/copilot/copilotStream';
 
 export class MeetingWebSocketService {
   private client: Client | null = null;
@@ -19,19 +21,25 @@ export class MeetingWebSocketService {
   private onInsightCallback?: (insight: AIInsight) => void;
   private onSummaryCallback?: (summary: MeetingSummary) => void;
   private onConnectionStatusChange?: (connected: boolean) => void;
+  private onQuestionCallback?: (question: InterviewQuestion) => void;
+  private onCopilotStreamCallback?: (event: CopilotStreamEvent) => void;
 
   constructor(
     meetingId: string,
     onTranscript: (segment: TranscriptSegment) => void,
     onInsight?: (insight: AIInsight) => void,
     onSummary?: (summary: MeetingSummary) => void,
-    onConnectionChange?: (connected: boolean) => void
+    onConnectionChange?: (connected: boolean) => void,
+    onQuestion?: (question: InterviewQuestion) => void,
+    onCopilotStream?: (event: CopilotStreamEvent) => void
   ) {
     this.meetingId = meetingId;
     this.onTranscriptCallback = onTranscript;
     this.onInsightCallback = onInsight;
     this.onSummaryCallback = onSummary;
     this.onConnectionStatusChange = onConnectionChange;
+    this.onQuestionCallback = onQuestion;
+    this.onCopilotStreamCallback = onCopilotStream;
   }
 
   public connect() {
@@ -65,6 +73,28 @@ export class MeetingWebSocketService {
               this.onInsightCallback(insight);
             } catch (err) {
               console.error('Erro ao deserializar insight via WS:', err);
+            }
+          }
+        });
+
+        // Perguntas detectadas e estado da resposta do copiloto (spec 005/004)
+        this.client?.subscribe(`/topic/meetings/${this.meetingId}/questions`, (message) => {
+          if (message.body && this.onQuestionCallback) {
+            try {
+              this.onQuestionCallback(JSON.parse(message.body) as InterviewQuestion);
+            } catch (err) {
+              console.error('Erro ao deserializar pergunta via WS:', err);
+            }
+          }
+        });
+
+        // Resposta do copiloto em partes (spec 008)
+        this.client?.subscribe(`/topic/meetings/${this.meetingId}/copilot`, (message) => {
+          if (message.body && this.onCopilotStreamCallback) {
+            try {
+              this.onCopilotStreamCallback(JSON.parse(message.body) as CopilotStreamEvent);
+            } catch (err) {
+              console.error('Erro ao deserializar evento do copiloto via WS:', err);
             }
           }
         });
