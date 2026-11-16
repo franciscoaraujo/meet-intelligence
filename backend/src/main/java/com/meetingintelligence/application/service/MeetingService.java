@@ -67,6 +67,8 @@ public class MeetingService {
                 .googleCalendarEventId(request.getGoogleCalendarEventId())
                 .captureMechanism(request.getCaptureMechanism())
                 .language(request.getLanguage() != null ? request.getLanguage() : "pt-BR")
+                .answerStyle(request.getAnswerStyle() != null ? request.getAnswerStyle()
+                        : com.meetingintelligence.domain.enums.AnswerStyle.NEUTRAL)
                 .status(MeetingStatus.SCHEDULED)
                 .build();
 
@@ -153,6 +155,18 @@ public class MeetingService {
         return mapToResponse(meetingRepository.save(meeting));
     }
 
+    /** Tom das respostas do copiloto (spec 014). */
+    @Transactional
+    public MeetingResponse updateAnswerStyle(UUID meetingId, UUID organizationId, String style) {
+        var parsed = com.meetingintelligence.domain.enums.AnswerStyle.parseStrict(style);
+        Meeting meeting = meetingRepository.findById(meetingId)
+                .filter(m -> m.getOrganization() != null && m.getOrganization().getId().equals(organizationId))
+                .orElseThrow(() -> new com.meetingintelligence.application.exception.ResourceNotFoundException(
+                        "Reunião não encontrada: " + meetingId));
+        meeting.setAnswerStyle(parsed);
+        return mapToResponse(meetingRepository.save(meeting));
+    }
+
     @Transactional
     public void deleteMeeting(UUID meetingId) {
         if (!meetingRepository.existsById(meetingId)) {
@@ -177,6 +191,7 @@ public class MeetingService {
                 .captureMechanism(m.getCaptureMechanism())
                 .language(m.getLanguage())
                 .userInterviewRole(m.getUserInterviewRole() != null ? m.getUserInterviewRole() : com.meetingintelligence.domain.enums.InterviewRole.CANDIDATE)
+                .answerStyle(m.getAnswerStyle() != null ? m.getAnswerStyle() : com.meetingintelligence.domain.enums.AnswerStyle.NEUTRAL)
                 .createdAt(m.getCreatedAt())
                 .build();
     }

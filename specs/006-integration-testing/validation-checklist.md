@@ -95,6 +95,7 @@ Funciona mesmo sem transcrição configurada: no campo de texto da sala, escolha
 | 8.4 | Voltar para Português no meio da captura | Próximas falas e respostas em português | |
 | 8.5 | Clicar "Nova captura" depois de escolher Français | A nova sessão já abre em francês | |
 | 8.5b | Num card em inglês, **Traduzir → Português** (spec 012) | Pergunta, resposta e seções em português, selo "Traduzido"; "Ver original" volta; pedir de novo é instantâneo | |
+| 8.7 | Estilo → **Técnica**, depois **Informal**, e "Gerar de novo" no mesmo card (spec 014) | O tom muda (termos precisos e trade-offs × frases curtas de conversa) e os fatos do currículo continuam os mesmos | |
 | 8.6 | Observação: o STT local do Google tem qualidade menor em inglês/francês com sotaque; com a chave do Gemini a transcrição tende a ser melhor | Registrar | |
 
 Registrar os resultados em `validation-report.md` (seção "Validação em reunião real"), com data, navegador, provedores usados e observações.

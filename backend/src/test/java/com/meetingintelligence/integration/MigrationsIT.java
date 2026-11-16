@@ -31,4 +31,18 @@ class MigrationsIT extends AbstractPostgresIT {
         assertThat(failed).isZero();
         assertThat(applied).isGreaterThanOrEqualTo(6);
     }
+
+    @Test
+    @DisplayName("Spec 014 CA-03: meetings.answer_style existe, é obrigatória e tem padrão NEUTRAL")
+    void answerStyleColumnDefaultsToNeutral() {
+        String columnDefault = jdbc.queryForObject(
+                "select column_default from information_schema.columns where table_name = 'meetings' and column_name = 'answer_style'",
+                String.class);
+        String nullable = jdbc.queryForObject(
+                "select is_nullable from information_schema.columns where table_name = 'meetings' and column_name = 'answer_style'",
+                String.class);
+
+        assertThat(columnDefault).contains("NEUTRAL");
+        assertThat(nullable).isEqualTo("NO");
+    }
 }

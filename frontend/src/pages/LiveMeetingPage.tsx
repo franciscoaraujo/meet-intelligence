@@ -25,6 +25,7 @@ import { mergeById, upsertById } from '../features/live/mergeById';
 import { useStickToBottom } from '../features/live/useStickToBottom';
 import { loadInterviewModePreference, saveInterviewModePreference } from '../features/live/interviewMode';
 import { saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
+import { saveAnswerStylePreference, toAnswerStyle, type AnswerStyle } from '../features/live/answerStyle';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
 import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
 import { manualSpeakerOptions, segmentSpeakerView, type SpeakerRole } from '../features/transcription/speaker';
@@ -598,6 +599,20 @@ export const LiveMeetingPage: React.FC = () => {
     }
   };
 
+  /** Spec 014: estilo das respostas do copiloto (vale para as próximas respostas). */
+  const changeAnswerStyle = async (style: AnswerStyle) => {
+    if (!id) return;
+    setLanguageError(null);
+    saveAnswerStylePreference(style);
+    try {
+      const res = await api.patch<Meeting>(`/meetings/${id}/answer-style?style=${style}`);
+      setMeeting(res.data);
+    } catch (e) {
+      console.error('Erro ao trocar o estilo das respostas:', e);
+      setLanguageError('Não foi possível trocar o estilo.');
+    }
+  };
+
   const toggleInterviewMode = () => {
     const next = !interviewMode;
     saveInterviewModePreference(next);
@@ -642,6 +657,8 @@ export const LiveMeetingPage: React.FC = () => {
         language={toInterviewLanguage(meeting?.language)}
         onLanguageChange={(tag) => void changeLanguage(tag)}
         languageError={languageError}
+        answerStyle={toAnswerStyle(meeting?.answerStyle)}
+        onAnswerStyleChange={(style) => void changeAnswerStyle(style)}
         role={meeting?.userInterviewRole ?? 'CANDIDATE'}
         onRoleChange={(r) => void updateInterviewRole(r)}
         connected={wsConnected}

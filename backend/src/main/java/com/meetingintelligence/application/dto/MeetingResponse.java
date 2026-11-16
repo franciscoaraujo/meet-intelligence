@@ -30,6 +30,7 @@ public class MeetingResponse {
     private String language;
     /** Papel do usuário na entrevista (CANDIDATE padrão, INTERVIEWER). */
     private com.meetingintelligence.domain.enums.InterviewRole userInterviewRole;
+    private com.meetingintelligence.domain.enums.AnswerStyle answerStyle;
     private OffsetDateTime createdAt;
 }
 

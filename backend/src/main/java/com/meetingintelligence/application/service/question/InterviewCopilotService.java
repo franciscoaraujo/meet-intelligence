@@ -95,7 +95,7 @@ public class InterviewCopilotService implements InterviewCopilot {
                         .systemPrompt(prompts.systemPrompt())
                         .userPrompt(prompts.userPrompt(question.getQuestionText(), question.getUtteranceType().name(),
                                 question.getScore().doubleValue(), recent, meeting.getUserInterviewRole(), summary, kb, correction,
-                                manual, meeting.getLanguage()))
+                                manual, meeting.getLanguage(), meeting.getAnswerStyle()))
                         .maxTokens(2048)
                         .jsonMode(true)
                         .build();

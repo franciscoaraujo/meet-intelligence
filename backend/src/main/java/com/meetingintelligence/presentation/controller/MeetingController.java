@@ -82,6 +82,16 @@ public class MeetingController {
         return ResponseEntity.ok(meetingService.updateLanguage(id, currentUser.getOrganizationId(), language));
     }
 
+    @PatchMapping("/{id}/answer-style")
+    @Operation(summary = "Definir o estilo das respostas do copiloto", description = "NEUTRAL, INFORMAL, FORMAL ou TECHNICAL (spec 014)")
+    public ResponseEntity<MeetingResponse> updateAnswerStyle(
+            @PathVariable UUID id,
+            @RequestParam String style,
+            @org.springframework.security.core.annotation.AuthenticationPrincipal
+            com.meetingintelligence.infrastructure.security.UserPrincipal currentUser) {
+        return ResponseEntity.ok(meetingService.updateAnswerStyle(id, currentUser.getOrganizationId(), style));
+    }
+
     @DeleteMapping("/{id}")
     @Operation(summary = "Excluir reunião definitivamente (LGPD)", description = "Exclusão em cascata de gravações, transcrições e análises")
     public ResponseEntity<Void> deleteMeeting(@PathVariable UUID id) {

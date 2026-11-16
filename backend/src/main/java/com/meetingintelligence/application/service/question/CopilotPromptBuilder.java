@@ -2,6 +2,7 @@ package com.meetingintelligence.application.service.question;
 
 import com.meetingintelligence.application.service.ai.PromptManagerService;
 import com.meetingintelligence.domain.entity.TranscriptSegment;
+import com.meetingintelligence.domain.enums.AnswerStyle;
 import com.meetingintelligence.domain.enums.InterviewRole;
 import com.meetingintelligence.domain.language.InterviewLanguage;
 import com.meetingintelligence.domain.speech.SpeakerRole;
@@ -47,6 +48,19 @@ public class CopilotPromptBuilder {
                 manualTrigger, null);
     }
 
+    public String userPrompt(String question, String utteranceType, double score, List<TranscriptSegment> recentSegments,
+                             InterviewRole interviewRole, String summary, String knowledgeBase, String correction,
+                             boolean manualTrigger, String languageTag) {
+        return userPrompt(question, utteranceType, score, recentSegments, interviewRole, summary, knowledgeBase, correction,
+                manualTrigger, languageTag, null);
+    }
+
+    /** Spec 014: o estilo muda o tom, nunca os fatos nem o tamanho da resposta falada. */
+    static String styleInstruction(AnswerStyle style) {
+        return "<answer_style>\n" + style.instruction() + " O estilo muda só o tom: os fatos continuam restritos ao "
+                + "<knowledge_base>, e \"spoken_answer\" continua com 60 a 140 palavras.\n</answer_style>";
+    }
+
     /** Spec 011: em inglês/francês, a resposta inteira sai no idioma da entrevista. */
     static String languageInstruction(InterviewLanguage language) {
         return "<answer_language>\nA entrevista é em " + language.namePt() + " (" + language.tag() + "). Ignore a instrução "
@@ -64,7 +78,7 @@ public class CopilotPromptBuilder {
 
     public String userPrompt(String question, String utteranceType, double score, List<TranscriptSegment> recentSegments,
                              InterviewRole interviewRole, String summary, String knowledgeBase, String correction,
-                             boolean manualTrigger, String languageTag) {
+                             boolean manualTrigger, String languageTag, AnswerStyle style) {
         StringBuilder conversation = new StringBuilder();
         int start = Math.max(0, recentSegments.size() - CONTEXT_SEGMENTS);
         for (TranscriptSegment s : recentSegments.subList(start, recentSegments.size())) {
@@ -84,6 +98,9 @@ public class CopilotPromptBuilder {
                 .append(question).append("\n</question>");
         if (manualTrigger) {
             sb.append("\n\n").append(MANUAL_TRIGGER_INSTRUCTION);
+        }
+        if (style != null && style.instruction() != null) {
+            sb.append("\n\n").append(styleInstruction(style));
         }
         InterviewLanguage language = InterviewLanguage.fromTag(languageTag);
         if (language != InterviewLanguage.PT_BR) {

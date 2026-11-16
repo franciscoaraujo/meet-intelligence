@@ -83,6 +83,12 @@ public class Meeting {
     @Column(name = "user_interview_role", length = 20)
     private com.meetingintelligence.domain.enums.InterviewRole userInterviewRole;
 
+    /** Tom das respostas do copiloto (spec 014). */
+    @Enumerated(EnumType.STRING)
+    @Column(name = "answer_style", nullable = false, length = 20)
+    @Builder.Default
+    private com.meetingintelligence.domain.enums.AnswerStyle answerStyle = com.meetingintelligence.domain.enums.AnswerStyle.NEUTRAL;
+
     @CreationTimestamp
     @Column(name = "created_at", nullable = false, updatable = false)
     private OffsetDateTime createdAt;
