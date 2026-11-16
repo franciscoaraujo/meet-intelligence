@@ -1,6 +1,6 @@
 # Spec 016 — Pergunta em várias partes
 
-Prioridade: **P1** · Status: **Implementada (2026-11-16; testes automatizados, falta validar em entrevista real)** · Origem: pedido do usuário (2026-11-16), continuação da spec 015 ("juntar uma pergunta que vem em várias partes")
+Prioridade: **P1** · Status: **Validada (implementada e validada em entrevista real em 2026-11-16)** · Origem: pedido do usuário (2026-11-16), continuação da spec 015 ("juntar uma pergunta que vem em várias partes")
 
 ## Problema
 O entrevistador costuma completar a pergunta depois de uma pausa:
