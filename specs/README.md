@@ -29,12 +29,8 @@ Cada etapa só começa com a anterior verde (testes passando e critérios de ace
 7. **004:** copiloto dedicado.
 8. **006 T-05..T-09:** integração ponta a ponta e validação em reunião real.
 
-## Evoluções registradas (P3, sem implementação prevista)
-- Diarização avançada de vários entrevistadores na aba.
-- STT local com Faster-Whisper como **opção**, não como substituição.
-- Streaming de áudio para reduzir latência (o streaming de tokens do copiloto passou para a spec 008).
-- Processamento distribuído via RabbitMQ (já no compose) quando houver mais de uma instância.
-- Escolha de modelo por custo e latência.
+## Ideias futuras
+As ideias guardadas para depois (pacote "Entrevista" com perfil e histórias STAR, Ollama local, Faster-Whisper, diarização, leitura da tela etc.) estão em [ideias-futuras.md](ideias-futuras.md). Cada uma vira spec só quando for priorizada.
 
 ## Definição de pronto
 Ver a seção 5 da missão. Resumo:
