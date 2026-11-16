@@ -56,6 +56,7 @@ class TranscriptionServiceTest {
     @Mock private com.meetingintelligence.application.service.question.QuestionDetectionService questionDetection;
     @Mock private PlatformTransactionManager transactionManager;
     @Mock private com.meetingintelligence.application.service.SpeakerAttributionService speakerAttribution;
+    @Mock private com.meetingintelligence.application.service.SttUsageRecorder sttUsageRecorder;
 
     @InjectMocks
     private TranscriptionService transcriptionService;
@@ -168,6 +169,28 @@ class TranscriptionServiceTest {
 
         assertThat(response.getStatus()).isEqualTo("NO_SPEECH");
         verify(segmentRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("Spec 017 RF-06/CA-07: trecho transcrito pelo Grok é gravado como GROK_STT e o uso é registrado")
+    void grokTranscriptionRecordsUsage() {
+        TranscriptionChainResult result = transcribed("GROK_STT", "Fale sobre você");
+        when(speechToTextRouter.transcribe(any(), any())).thenReturn(result);
+
+        ChunkTranscriptionResponse response = transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
+
+        assertThat(response.getSegments().get(0).getSource()).isEqualTo("GROK_STT");
+        verify(sttUsageRecorder).record(eq(meeting), any(), eq(result));
+    }
+
+    @Test
+    @DisplayName("Spec 017: transcrição de outro provedor não registra uso de STT")
+    void otherProviderDoesNotRecordUsage() {
+        when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Pergunta"));
+
+        transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
+
+        verify(sttUsageRecorder, never()).record(any(), any(), any());
     }
 
     @Test

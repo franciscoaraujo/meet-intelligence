@@ -59,6 +59,8 @@ public class TranscriptionService {
     private final PlatformTransactionManager transactionManager;
     private final SpeakerAttributionService speakerAttribution;
     private final com.meetingintelligence.application.service.question.QuestionDetectionService questionDetection;
+    /** Spec 017: uso do STT do Grok em llm_usage. */
+    private final SttUsageRecorder sttUsageRecorder;
 
     // ------------------------------------------------------------- Áudio ao vivo
 
@@ -86,6 +88,9 @@ public class TranscriptionService {
             SttRequest request = new SttRequest(cmd.audio(), cmd.mimeType(), claim.language(), SttRequest.Mode.LIVE);
             TranscriptionChainResult result = speechToTextRouter.transcribe(
                     request, chainFactory.build(claim.orgConfig(), SttRequest.Mode.LIVE));
+            if (SttUsageRecorder.applies(result)) {
+                meetingRepository.findById(cmd.meetingId()).ifPresent(m -> sttUsageRecorder.record(m, request, result));
+            }
 
             // 3. Persistência conforme o resultado
             return tx.execute(status -> completeIngestion(claim.ingestionId(), cmd, source, result, userId));
@@ -218,6 +223,7 @@ public class TranscriptionService {
 
         SttRequest request = new SttRequest(audioBytes, mimeType, meeting.getLanguage(), SttRequest.Mode.BATCH);
         TranscriptionChainResult result = speechToTextRouter.transcribe(request, chainFactory.build(orgConfig, SttRequest.Mode.BATCH));
+        sttUsageRecorder.record(meeting, request, result);
         if (result.status() != TranscriptionChainResult.Status.TRANSCRIBED) {
             log.warn("Gravação da reunião {} sem transcrição: status={}", meetingId, result.status());
             return result;

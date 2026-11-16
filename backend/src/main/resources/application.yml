@@ -105,6 +105,8 @@ app:
       api-key: ${XAI_API_KEY:mock-key}
       model: ${GROK_MODEL:grok-4.7}
       copilot-model: ${GROK_COPILOT_MODEL:}
+      # Transcrição com a mesma chave xAI (spec 017). Vazio = grok-voice-transcribe-2.0
+      stt-model: ${GROK_STT_MODEL:}
     claude:
       api-key: ${ANTHROPIC_API_KEY:mock-key}
       model: ${CLAUDE_MODEL:claude-opus-5-5}

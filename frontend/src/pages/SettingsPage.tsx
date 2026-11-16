@@ -333,6 +333,7 @@ export const SettingsPage: React.FC = () => {
               </div>
               <p className="text-xs text-[#444746] mt-2 leading-relaxed">
                 Raciocínio forte e respostas diretas, com bom desempenho em perguntas técnicas e de arquitetura.
+                A mesma chave também faz a transcrição do áudio da reunião.
               </p>
             </div>
 
