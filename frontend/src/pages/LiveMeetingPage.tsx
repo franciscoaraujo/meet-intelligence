@@ -3,26 +3,14 @@ import { useParams, useNavigate } from 'react-router-dom';
 import {
   Mic,
   MonitorSpeaker,
-  Square,
   Search,
-  Upload,
   Sparkles,
   MessageSquare,
   Volume2,
-  Users,
-  Check,
-  Edit2,
-  ShieldAlert,
   Send,
-  Wifi,
-  WifiOff,
   CheckSquare,
   Award,
-  RefreshCw,
   ChevronRight,
-  ArrowLeft,
-  Target,
-  Languages
 } from 'lucide-react';
 import { api } from '../services/api';
 import { MeetingWebSocketService } from '../services/websocket';
@@ -32,10 +20,11 @@ import { copilotStreamReducer, isDraftActive, type CopilotStreamEvent } from '..
 import type { CopilotTranslation } from '../features/copilot/copilotAnswer';
 import { TranscriptItem, type TranscriptItemActions } from '../components/live/TranscriptItem';
 import { InterviewModeLayout } from '../components/live/InterviewModeLayout';
+import { LiveMeetingHeader } from '../components/live/LiveMeetingHeader';
 import { mergeById, upsertById } from '../features/live/mergeById';
 import { useStickToBottom } from '../features/live/useStickToBottom';
 import { loadInterviewModePreference, saveInterviewModePreference } from '../features/live/interviewMode';
-import { INTERVIEW_LANGUAGES, saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
+import { saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
 import { SourceStatusBadge } from '../components/capture/SourceStatusBadge';
 import { manualSpeakerOptions, segmentSpeakerView, type SpeakerRole } from '../features/transcription/speaker';
@@ -645,168 +634,33 @@ export const LiveMeetingPage: React.FC = () => {
 
   return (
     <div className="flex flex-col h-[calc(100vh-76px)] max-h-[calc(100vh-76px)] bg-white overflow-hidden">
-      {/* Banner LGPD Material 3 */}
-      <div className="bg-[#e8f0fe] border-b border-[#d3e3fd] px-6 py-1.5 flex items-center justify-between text-xs text-[#041e49] shrink-0">
-        <div className="flex items-center gap-2">
-          <ShieldAlert className="w-3.5 h-3.5 text-[#0b57d0]" />
-          <span>
-            <strong>Aviso de Consentimento:</strong> grave e analise com IA somente com o consentimento de todos os participantes da reunião ou ligação (LGPD).
-          </span>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5 text-[11px] font-medium">
-            {wsConnected ? (
-              <span className="text-[#146c2e] flex items-center gap-1">
-                <Wifi className="w-3 h-3" /> Sincronização em Tempo Real Ativa
-              </span>
-            ) : (
-              <span className="text-[#444746] flex items-center gap-1">
-                <WifiOff className="w-3 h-3" /> Offline
-              </span>
-            )}
-          </span>
-        </div>
-      </div>
-
-      {/* Top Header Google Meet Style */}
-      <header className="h-16 px-6 border-b border-[#e0e3e7] bg-white flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate('/meetings')}
-            className="p-2 rounded-full hover:bg-[#f0f4f9] text-[#444746] transition-colors"
-            title="Voltar para reuniões"
-          >
-            <ArrowLeft className="w-4 h-4" />
-          </button>
-          <div>
-            <h1 className="text-base font-medium text-[#1f1f1f] truncate max-w-md">
-              {meeting?.title || 'Sala de Reunião'}
-            </h1>
-            <p className="text-xs text-[#444746] flex items-center gap-2">
-              <span>{meeting?.captureMechanism}</span>
-              <span>•</span>
-              <span className="text-[#0b57d0] font-medium">{meeting?.language}</span>
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5">
-          <label className="flex items-center gap-1.5 text-xs text-[#444746]" title="Idioma da entrevista: captura, perguntas e respostas do copiloto">
-            <Languages className="w-3.5 h-3.5 text-[#0b57d0]" />
-            <select
-              value={toInterviewLanguage(meeting?.language)}
-              onChange={(e) => void changeLanguage(e.target.value as InterviewLanguageTag)}
-              className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f]"
-              aria-label="Idioma da entrevista"
-              data-testid="interview-language"
-            >
-              {INTERVIEW_LANGUAGES.map((l) => (
-                <option key={l.tag} value={l.tag}>
-                  {l.flag} {l.label}
-                </option>
-              ))}
-            </select>
-            {languageError && <span role="alert" className="text-[11px] text-[#b3261e]">{languageError}</span>}
-          </label>
-          <button
-            type="button"
-            onClick={toggleInterviewMode}
-            aria-pressed={!!interviewMode}
-            className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${interviewMode ? '!bg-[#d3e3fd] !border-[#0b57d0] !text-[#041e49]' : ''}`}
-            title="Destaca a pergunta atual e a resposta sugerida"
-            data-testid="interview-mode-toggle"
-          >
-            <Target className="w-3.5 h-3.5" />
-            <span>{interviewMode ? 'Sair do modo entrevista' : 'Modo entrevista'}</span>
-          </button>
-          <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*,video/*" className="hidden" />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="md-btn-outlined !py-1.5 !px-3.5 !text-xs"
-          >
-            <Upload className="w-3.5 h-3.5" />
-            <span>{uploading ? 'Enviando mídia...' : 'Upload de Mídia'}</span>
-          </button>
-
-          <button
-            onClick={() => (tabCaptureOn ? capture.stopTab() : capture.startTab())}
-            className={`md-btn-outlined !py-1.5 !px-3.5 !text-xs ${
-              tabCaptureOn ? '!bg-[#e6f4ea] !border-[#146c2e] !text-[#146c2e]' : ''
-            }`}
-            title={
-              'Captura o som de qualquer fonte do computador (spec 009):\n' +
-              '• Uma aba (Meet, WhatsApp Web, YouTube…): marque "Compartilhar áudio da guia".\n' +
-              '• Todo o som do PC, inclusive apps como WhatsApp, Teams e Zoom: escolha "Tela inteira" e marque "Compartilhar áudio do sistema" (Windows/ChromeOS).\n' +
-              'Janelas não compartilham áudio.'
-            }
-            data-testid="computer-audio-toggle"
-          >
-            <Volume2 className="w-3.5 h-3.5" />
-            <span>{tabCaptureOn ? 'Parar captura do computador' : 'Capturar áudio do computador'}</span>
-          </button>
-
-          <select
-            value={interviewMode ? 'OFF' : capture.micMode}
-            onChange={(e) => void capture.setMicMode(e.target.value as 'BACKEND' | 'WEB_SPEECH' | 'OFF')}
-            disabled={!!interviewMode}
-            className="text-xs px-2.5 py-1.5 rounded-full border border-[#c4c7c5] bg-white text-[#1f1f1f] disabled:opacity-60"
-            title="Como transcrever o seu microfone"
-            aria-label="Modo de transcrição do microfone"
-          >
-            <option value="BACKEND">Microfone: transcrição do servidor</option>
-            <option value="WEB_SPEECH">Microfone: reconhecimento do navegador (Google)</option>
-            <option value="OFF">{interviewMode ? 'Microfone: desligado no modo entrevista' : 'Microfone: desligado (só o participante remoto)'}</option>
-          </select>
-
-          <button
-            onClick={answerLatestQuestion}
-            disabled={manualPending}
-            className="md-btn-tonal !py-1.5 !px-3.5 !text-xs disabled:opacity-70"
-            title="Clique quando o entrevistador terminar de perguntar: o copiloto responde à fala dele desde a pergunta anterior"
-            data-testid="question-finished"
-          >
-            <Sparkles className={`w-3.5 h-3.5 ${manualPending ? 'motion-safe:animate-spin' : ''}`} />
-            <span>{manualPending ? 'Enviando pergunta…' : 'Pergunta terminou'}</span>
-          </button>
-
-          <button
-            onClick={triggerAiAnalysis}
-            disabled={analyzing}
-            className="md-btn-tonal !py-1.5 !px-3.5 !text-xs"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${analyzing ? 'animate-spin' : ''}`} />
-            <span>{analyzing ? 'Consolidando...' : 'Consolidar com IA'}</span>
-          </button>
-
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#f8fafd] border border-[#e0e3e7]">
-            <span className={`w-2.5 h-2.5 rounded-full ${isRecording ? 'bg-[#b3261e] animate-ping' : 'bg-[#747775]'}`} />
-            <span className="text-xs font-mono font-medium text-[#1f1f1f]">{formatTime(recordingSeconds)}</span>
-            <span className="text-[10px] uppercase font-semibold text-[#444746]">
-              {isRecording ? 'Gravando' : 'Pausado'}
-            </span>
-          </div>
-
-          <button
-            onClick={toggleRecording}
-            className={`flex items-center gap-2 px-4 py-2 rounded-full text-xs font-medium shadow-sm transition-all ${
-              isRecording
-                ? 'bg-[#b3261e] hover:bg-[#8c1d18] text-white'
-                : 'bg-[#0b57d0] hover:bg-[#0842a0] text-white'
-            }`}
-          >
-            {isRecording ? (
-              <>
-                <Square className="w-3.5 h-3.5 fill-white" /> Encerrar Captura
-              </>
-            ) : (
-              <>
-                <Mic className="w-3.5 h-3.5" /> Iniciar Captura
-              </>
-            )}
-          </button>
-        </div>
-      </header>
+      <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept="audio/*,video/*" className="hidden" />
+      {/* Spec 013: cabeçalho limpo; ações secundárias no menu "⋯" */}
+      <LiveMeetingHeader
+        title={meeting?.title || 'Sala de reunião'}
+        onBack={() => navigate('/meetings')}
+        language={toInterviewLanguage(meeting?.language)}
+        onLanguageChange={(tag) => void changeLanguage(tag)}
+        languageError={languageError}
+        role={meeting?.userInterviewRole ?? 'CANDIDATE'}
+        onRoleChange={(r) => void updateInterviewRole(r)}
+        connected={wsConnected}
+        interviewMode={!!interviewMode}
+        onToggleInterviewMode={toggleInterviewMode}
+        computerAudioOn={tabCaptureOn}
+        onToggleComputerAudio={() => void (tabCaptureOn ? capture.stopTab() : capture.startTab())}
+        manualPending={manualPending}
+        onQuestionFinished={() => void answerLatestQuestion()}
+        analyzing={analyzing}
+        onConsolidate={() => void triggerAiAnalysis()}
+        uploading={uploading}
+        onUpload={() => fileInputRef.current?.click()}
+        micMode={capture.micMode}
+        onMicModeChange={(mode) => void capture.setMicMode(mode)}
+        isRecording={isRecording}
+        elapsed={formatTime(recordingSeconds)}
+        onToggleRecording={() => void toggleRecording()}
+      />
 
       {/* Grid Principal: 3 ÁREAS */}
       <div className="flex-1 grid grid-cols-12 grid-rows-[minmax(0,1fr)] min-h-0 h-full overflow-hidden divide-x divide-[#e0e3e7]">
@@ -829,28 +683,6 @@ export const LiveMeetingPage: React.FC = () => {
                 onChange={(e) => setSearchTerm(e.target.value)}
                 className="w-full pl-8 pr-3 py-1 bg-white border border-[#c4c7c5] rounded-full text-xs text-[#1f1f1f] placeholder-[#747775] focus:outline-none focus:border-[#0b57d0]"
               />
-            </div>
-          </div>
-
-          {/* Papel do usuário nesta entrevista (spec 003, RF-04) */}
-          <div className="px-3.5 py-2 border-b border-[#e0e3e7] bg-[#edf2fc]/60 flex items-center justify-between gap-2 shrink-0">
-            <span className="text-[11px] font-medium text-[#444746]">Seu papel nesta entrevista:</span>
-            <div className="flex items-center gap-1.5">
-              {(['CANDIDATE', 'INTERVIEWER'] as const).map((r) => {
-                const selected = (meeting?.userInterviewRole ?? 'CANDIDATE') === r;
-                return (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => updateInterviewRole(r)}
-                    className={`px-3 py-1 rounded-full text-[11px] font-semibold transition-all cursor-pointer ${
-                      selected ? 'bg-[#0b57d0] text-white shadow-2xs' : 'bg-white text-[#444746] border border-[#c4c7c5] hover:bg-[#f0f4f9]'
-                    }`}
-                  >
-                    {r === 'CANDIDATE' ? 'Candidato' : 'Entrevistador'}
-                  </button>
-                );
-              })}
             </div>
           </div>
 

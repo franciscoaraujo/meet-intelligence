@@ -5,6 +5,7 @@ import { Plus, ArrowRight, Search, Trash2, Video } from 'lucide-react';
 import { api } from '../services/api';
 import { Meeting } from '../types';
 import { NewMeetingModal } from '../components/modals/NewMeetingModal';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 
 export const MeetingsPage: React.FC = () => {
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -13,6 +14,9 @@ export const MeetingsPage: React.FC = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  // Reunião aguardando confirmação de exclusão (diálogo do app, no lugar de window.confirm)
+  const [pendingDelete, setPendingDelete] = useState<Meeting | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -33,19 +37,23 @@ export const MeetingsPage: React.FC = () => {
     }
   };
 
-  const handleDeleteMeeting = async (id: string, e: React.MouseEvent) => {
+  const handleDeleteMeeting = (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm('Tem certeza de que deseja excluir esta reunião definitivamente? Todas as gravações, transcrições e análises serão apagadas em conformidade com a LGPD.')) {
-      return;
-    }
+    setDeleteError(null);
+    setPendingDelete(meetings.find((m) => m.id === id) ?? null);
+  };
 
+  const confirmDelete = async () => {
+    if (!pendingDelete) return;
+    const id = pendingDelete.id;
     try {
       setDeletingId(id);
       await api.delete(`/meetings/${id}`);
       setMeetings((prev) => prev.filter((m) => m.id !== id));
+      setPendingDelete(null);
     } catch (error) {
       console.error('Erro ao excluir reunião:', error);
-      alert('Não foi possível excluir a reunião.');
+      setDeleteError('Não foi possível excluir a reunião. Tente novamente.');
     } finally {
       setDeletingId(null);
     }
@@ -75,6 +83,23 @@ export const MeetingsPage: React.FC = () => {
 
   return (
     <div className="p-8 space-y-6 max-w-7xl mx-auto w-full">
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        destructive
+        title="Excluir reunião?"
+        description={
+          <>
+            <strong className="text-[#202124]">{pendingDelete?.title}</strong> será excluída definitivamente, com
+            gravações, transcrições e análises (LGPD). Essa ação não pode ser desfeita.
+          </>
+        }
+        confirmLabel="Excluir"
+        busy={deletingId !== null}
+        busyLabel="Excluindo…"
+        error={deleteError}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-normal tracking-tight text-[#1f1f1f]">Minhas Reuniões</h1>

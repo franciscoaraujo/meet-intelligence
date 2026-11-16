@@ -2,10 +2,11 @@
 
 export type InterviewLanguageTag = 'pt-BR' | 'en-US' | 'fr-FR';
 
-export const INTERVIEW_LANGUAGES: Array<{ tag: InterviewLanguageTag; label: string; flag: string }> = [
-  { tag: 'pt-BR', label: 'Português', flag: '🇧🇷' },
-  { tag: 'en-US', label: 'English', flag: '🇺🇸' },
-  { tag: 'fr-FR', label: 'Français', flag: '🇫🇷' },
+/** Sigla no lugar de bandeira: o Windows não desenha emoji de bandeira (aparecia "us English"). */
+export const INTERVIEW_LANGUAGES: Array<{ tag: InterviewLanguageTag; label: string; short: string }> = [
+  { tag: 'pt-BR', label: 'Português', short: 'PT' },
+  { tag: 'en-US', label: 'English', short: 'EN' },
+  { tag: 'fr-FR', label: 'Français', short: 'FR' },
 ];
 
 export const LANGUAGE_STORAGE_KEY = 'meet-intelligence.interviewLanguage';

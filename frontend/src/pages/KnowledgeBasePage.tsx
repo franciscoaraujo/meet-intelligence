@@ -6,6 +6,7 @@
  * é usado como contexto pelo Copiloto de Entrevista e pelo Chat da IA.
  */
 import React, { useEffect, useRef, useState } from 'react';
+import { ConfirmDialog } from '../components/common/ConfirmDialog';
 import {
   BookMarked,
   UploadCloud,
@@ -127,13 +128,28 @@ export const KnowledgeBasePage: React.FC = () => {
     }
   };
 
-  const deleteDocument = async (doc: KnowledgeDocument) => {
-    if (!window.confirm(`Remover "${doc.fileName}" da Base de Conhecimento?`)) return;
+  // Documento aguardando confirmação de remoção (diálogo do app, no lugar de window.confirm)
+  const [pendingRemoval, setPendingRemoval] = useState<KnowledgeDocument | null>(null);
+  const [removing, setRemoving] = useState(false);
+  const [removalError, setRemovalError] = useState<string | null>(null);
+
+  const deleteDocument = (doc: KnowledgeDocument) => {
+    setRemovalError(null);
+    setPendingRemoval(doc);
+  };
+
+  const confirmRemoval = async () => {
+    if (!pendingRemoval) return;
+    const doc = pendingRemoval;
     try {
+      setRemoving(true);
       await api.delete(`/knowledge-base/${doc.id}`);
       setDocuments((prev) => prev.filter((d) => d.id !== doc.id));
+      setPendingRemoval(null);
     } catch (err) {
-      setError(extractErrorMessage(err));
+      setRemovalError(extractErrorMessage(err));
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -195,6 +211,23 @@ export const KnowledgeBasePage: React.FC = () => {
 
   return (
     <div className="p-8 space-y-6 max-w-5xl mx-auto w-full">
+      <ConfirmDialog
+        open={pendingRemoval !== null}
+        destructive
+        title="Remover documento?"
+        description={
+          <>
+            <strong className="text-[#202124]">{pendingRemoval?.fileName}</strong> deixará de ser usado como contexto pela IA e
+            será removido da Base de Conhecimento.
+          </>
+        }
+        confirmLabel="Remover"
+        busy={removing}
+        busyLabel="Removendo…"
+        error={removalError}
+        onConfirm={() => void confirmRemoval()}
+        onCancel={() => setPendingRemoval(null)}
+      />
       <div>
         <h1 className="text-2xl font-normal tracking-tight text-[#1f1f1f] flex items-center gap-2.5">
           <BookMarked className="w-6 h-6 text-[#0b57d0]" />

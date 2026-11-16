@@ -1,5 +1,5 @@
 import React from 'react';
-import { Check, Edit2, Mic, MonitorSpeaker, Users } from 'lucide-react';
+import { Check, Edit2, Mic, MonitorSpeaker, Sparkles, Users } from 'lucide-react';
 import type { TranscriptSegment } from '../../types';
 import { segmentSpeakerView } from '../../features/transcription/speaker';
 
@@ -36,7 +36,7 @@ export const TranscriptItem = React.memo(function TranscriptItem({ segment, high
       id={`segment-${segment.startTimeMs}`}
       data-testid="transcript-item"
       className={`mi-enter p-3.5 rounded-2xl border transition-colors space-y-1.5 group ${
-        highlighted ? 'bg-[#e8f0fe] border-[#0b57d0] shadow-sm' : 'bg-[#f8fafd] border-[#e0e3e7] hover:border-[#c4c7c5]'
+        highlighted ? 'bg-[#e8f0fe] border-[#1a73e8]' : 'bg-white border-[#e8eaed] hover:border-[#dadce0]'
       }`}
     >
       <div className="flex items-center justify-between text-xs">
@@ -49,10 +49,11 @@ export const TranscriptItem = React.memo(function TranscriptItem({ segment, high
           <button
             type="button"
             onClick={() => actions.askAi(text)}
-            className="px-2 py-0.5 rounded-full bg-[#e8f0fe] hover:bg-[#d3e3fd] text-[#0b57d0] text-[10px] font-semibold transition-colors cursor-pointer"
-            title="Gerar resposta técnica para esta fala no Chat RAG"
+            className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-1 rounded-md text-[#5f6368] hover:text-[#1a73e8] hover:bg-[#e8f0fe] transition-opacity cursor-pointer"
+            title="Responder esta fala com IA (Chat RAG)"
+            aria-label="Responder esta fala com IA"
           >
-            💡 Responder com IA
+            <Sparkles className="w-3.5 h-3.5" />
           </button>
           <span className="text-[11px] font-mono text-[#444746]">{actions.formatMs(view.timeMs)}</span>
           {!isEditing && (

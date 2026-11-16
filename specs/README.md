@@ -16,6 +16,7 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 | [010](010-quick-capture/spec.md) | Captura avulsa: "Nova captura" sem Google Meet | P2 | **Implementada** (150 backend + 90 frontend) |
 | [011](011-interview-language/spec.md) | Idioma da entrevista: português, inglês ou francês | P2 | **Implementada** (163 backend + 97 frontend; uso real pendente) |
 | [012](012-card-translation/spec.md) | Botão "Traduzir" no card do copiloto | P2 | **Implementada** (167 backend + 101 frontend) |
+| [013](013-clean-live-ui/spec.md) | Interface limpa da sala ao vivo | P3 | **Implementada** (105 frontend; revisão visual pendente) |
 
 ## Ordem de implementação proposta
 Cada etapa só começa com a anterior verde (testes passando e critérios de aceite atendidos).
