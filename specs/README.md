@@ -23,6 +23,8 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 | [017](017-grok-transcription/spec.md) | Transcrição com o Grok: uma chave xAI para transcrição e respostas | P1 | **Implementada** (246 backend + 120 frontend; falta entrevista real) |
 | [018](018-deepgram-default/spec.md) | Deepgram como transcrição padrão do produto (chave do servidor, custo registrado) | P1 | **Implementada** (254 backend; falta a chave real e entrevista real) |
 | [019](019-landing-adhesion/spec.md) | Adesão ao copiloto de entrevistas nas landing pages (teste grátis + planos sob consulta) | P2 | **Implementada** (125 frontend; falta revisão visual) |
+| [020](020-capture-lifecycle-archive/spec.md) | Início e fim da captura num botão só; arquivar reuniões em vez de excluir | P1 | **Implementada** (296 backend + 148 frontend; falta entrevista real) |
+| [021](021-history-search-retention/spec.md) | Busca no histórico de entrevistas e prazo de guarda (LGPD) | P2 | Planejada |
 
 ## Ordem de implementação proposta
 Cada etapa só começa com a anterior verde (testes passando e critérios de aceite atendidos).

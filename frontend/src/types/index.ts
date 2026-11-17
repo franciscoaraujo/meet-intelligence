@@ -21,6 +21,8 @@ export interface Meeting {
   scheduledEnd?: string;
   actualStart?: string;
   actualEnd?: string;
+  /** Spec 020: data do arquivamento; ausente = ativa. */
+  archivedAt?: string | null;
   status: MeetingStatus;
   googleMeetLink?: string;
   googleCalendarEventId?: string;

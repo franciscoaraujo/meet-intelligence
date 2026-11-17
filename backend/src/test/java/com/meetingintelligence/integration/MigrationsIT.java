@@ -67,4 +67,20 @@ class MigrationsIT extends AbstractPostgresIT {
 
         assertThat(nullable).isEqualTo("YES");
     }
+
+    @org.junit.jupiter.api.Test
+    @org.junit.jupiter.api.DisplayName("Spec 020: meetings.archived_at existe e é opcional")
+    void archivedAtColumn() {
+        Object nullable = jdbcTemplateForSpec020().queryForObject(
+                "select is_nullable from information_schema.columns where table_name = 'meetings' and column_name = 'archived_at'",
+                String.class);
+        org.assertj.core.api.Assertions.assertThat(nullable).isEqualTo("YES");
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    private javax.sql.DataSource dataSourceForSpec020;
+
+    private org.springframework.jdbc.core.JdbcTemplate jdbcTemplateForSpec020() {
+        return new org.springframework.jdbc.core.JdbcTemplate(dataSourceForSpec020);
+    }
 }

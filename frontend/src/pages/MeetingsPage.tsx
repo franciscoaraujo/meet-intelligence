@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { isQuickCapture } from '../features/meetings/quickCapture';
 import { useNavigate } from 'react-router-dom';
-import { Plus, ArrowRight, Search, Trash2, Video } from 'lucide-react';
+import { Plus, ArrowRight, Search, Trash2, Video, Archive, ArchiveRestore } from 'lucide-react';
 import { api } from '../services/api';
 import { Meeting } from '../types';
 import { NewMeetingModal } from '../components/modals/NewMeetingModal';
@@ -17,18 +17,24 @@ export const MeetingsPage: React.FC = () => {
   // Reunião aguardando confirmação de exclusão (diálogo do app, no lugar de window.confirm)
   const [pendingDelete, setPendingDelete] = useState<Meeting | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  // Spec 020: ativas ou arquivadas; arquivar só esconde, nada é apagado
+  const [view, setView] = useState<'ACTIVE' | 'ARCHIVED'>('ACTIVE');
+  const [pendingArchive, setPendingArchive] = useState<Meeting | null>(null);
+  const [archiveError, setArchiveError] = useState<string | null>(null);
+  const [archivingId, setArchivingId] = useState<string | null>(null);
   const navigate = useNavigate();
 
   useEffect(() => {
     loadMeetings();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view]);
 
   const loadMeetings = async () => {
     try {
       setLoading(true);
       // Sincroniza primeiro eventos reais agendados no Google Meet do usuário
-      await api.get('/calendar/events').catch(() => {});
-      const res = await api.get('/meetings?size=50');
+      if (view === 'ACTIVE') await api.get('/calendar/events').catch(() => {});
+      const res = await api.get(`/meetings?size=50&archived=${view === 'ARCHIVED'}`);
       setMeetings(res.data.content || []);
     } catch (error) {
       console.error('Erro ao carregar reuniões:', error);
@@ -59,6 +65,41 @@ export const MeetingsPage: React.FC = () => {
     }
   };
 
+  const handleArchive = (m: Meeting, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setArchiveError(null);
+    setPendingArchive(m);
+  };
+
+  const confirmArchive = async () => {
+    if (!pendingArchive) return;
+    const id = pendingArchive.id;
+    try {
+      setArchivingId(id);
+      await api.post(`/meetings/${id}/archive`);
+      setMeetings((prev) => prev.filter((m) => m.id !== id));
+      setPendingArchive(null);
+    } catch (error) {
+      console.error('Erro ao arquivar reunião:', error);
+      setArchiveError('Não foi possível arquivar a reunião. Tente novamente.');
+    } finally {
+      setArchivingId(null);
+    }
+  };
+
+  const restore = async (m: Meeting, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      setArchivingId(m.id);
+      await api.post(`/meetings/${m.id}/unarchive`);
+      setMeetings((prev) => prev.filter((x) => x.id !== m.id));
+    } catch (error) {
+      console.error('Erro ao restaurar reunião:', error);
+    } finally {
+      setArchivingId(null);
+    }
+  };
+
   const filtered = meetings.filter((m) => {
     const matchesFilter = filter === 'ALL' || m.status === filter;
     const matchesSearch = m.title.toLowerCase().includes(search.toLowerCase());
@@ -84,16 +125,36 @@ export const MeetingsPage: React.FC = () => {
   return (
     <div className="p-8 space-y-6 max-w-7xl mx-auto w-full">
       <ConfirmDialog
-        open={pendingDelete !== null}
-        destructive
-        title="Excluir reunião?"
+        open={pendingArchive !== null}
+        title="Arquivar reunião?"
         description={
           <>
-            <strong className="text-[#202124]">{pendingDelete?.title}</strong> será excluída definitivamente, com
-            gravações, transcrições e análises (LGPD). Essa ação não pode ser desfeita.
+            <strong className="text-[#202124]">{pendingArchive?.title}</strong> sai da lista e pode ser restaurada em
+            &quot;Arquivadas&quot;. Transcrição, perguntas e respostas continuam guardadas.
           </>
         }
-        confirmLabel="Excluir"
+        confirmLabel="Arquivar"
+        busy={archivingId !== null}
+        busyLabel="Arquivando…"
+        error={archiveError}
+        onConfirm={() => void confirmArchive()}
+        onCancel={() => setPendingArchive(null)}
+      />
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        destructive
+        title="Excluir definitivamente?"
+        description={
+          <>
+            <strong className="text-[#202124]">{pendingDelete?.title}</strong> será apagada para sempre, com a
+            transcrição, as perguntas, as respostas do copiloto, a ata e as gravações (LGPD). Não há como recuperar.
+          </>
+        }
+        requireTyping={{
+          accepted: [pendingDelete?.title ?? '', 'EXCLUIR'],
+          label: <>Para confirmar, digite o título da reunião ou <strong>EXCLUIR</strong>:</>,
+        }}
+        confirmLabel="Excluir definitivamente"
         busy={deletingId !== null}
         busyLabel="Excluindo…"
         error={deleteError}
@@ -114,6 +175,24 @@ export const MeetingsPage: React.FC = () => {
           <Plus className="w-4 h-4" />
           Nova Reunião
         </button>
+      </div>
+
+      {/* Spec 020: ativas e arquivadas */}
+      <div className="flex items-center gap-1 border-b border-[#e0e3e7]" role="tablist">
+        {([['ACTIVE', 'Reuniões'], ['ARCHIVED', 'Arquivadas']] as const).map(([key, label]) => (
+          <button
+            key={key}
+            role="tab"
+            aria-selected={view === key}
+            onClick={() => setView(key)}
+            className={`px-4 py-2 text-sm font-medium -mb-px border-b-2 transition-colors cursor-pointer ${
+              view === key ? 'border-[#0b57d0] text-[#0b57d0]' : 'border-transparent text-[#444746] hover:text-[#1f1f1f]'
+            }`}
+            data-testid={`tab-${key.toLowerCase()}`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* Barra de Filtros Material 3 Filter Chips + Busca */}
@@ -154,7 +233,9 @@ export const MeetingsPage: React.FC = () => {
           <div className="w-12 h-12 rounded-full bg-[#f0f4f9] flex items-center justify-center mx-auto text-[#0b57d0]">
             <Video className="w-6 h-6" />
           </div>
-          <h3 className="text-base font-medium text-[#1f1f1f]">Nenhuma reunião encontrada</h3>
+          <h3 className="text-base font-medium text-[#1f1f1f]">
+            {view === 'ARCHIVED' ? 'Nenhuma reunião arquivada' : 'Nenhuma reunião encontrada'}
+          </h3>
           <p className="text-xs text-[#444746] max-w-md mx-auto">
             Clique em "Nova captura" para capturar qualquer áudio do computador (WhatsApp, YouTube, Meet…) ou sincronize sua agenda do Google Meet no painel principal.
           </p>
@@ -193,14 +274,38 @@ export const MeetingsPage: React.FC = () => {
                         </>
                       )}
                     </span>
-                    <button
-                      onClick={(e) => handleDeleteMeeting(m.id, e)}
-                      disabled={deletingId === m.id}
-                      title="Excluir reunião definitivamente (LGPD)"
-                      className="p-1.5 rounded-full text-[#444746] hover:text-[#b3261e] hover:bg-[#f9dedc] transition-colors"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {view === 'ACTIVE' ? (
+                      <button
+                        onClick={(e) => handleArchive(m, e)}
+                        disabled={archivingId === m.id}
+                        title="Arquivar (sai da lista; pode ser restaurada)"
+                        className="p-1.5 rounded-full text-[#444746] hover:text-[#0b57d0] hover:bg-[#e8f0fe] transition-colors"
+                        data-testid={`archive-${m.id}`}
+                      >
+                        <Archive className="w-3.5 h-3.5" />
+                      </button>
+                    ) : (
+                      <>
+                        <button
+                          onClick={(e) => void restore(m, e)}
+                          disabled={archivingId === m.id}
+                          title="Restaurar para a lista de reuniões"
+                          className="p-1.5 rounded-full text-[#444746] hover:text-[#0b57d0] hover:bg-[#e8f0fe] transition-colors"
+                          data-testid={`restore-${m.id}`}
+                        >
+                          <ArchiveRestore className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={(e) => handleDeleteMeeting(m.id, e)}
+                          disabled={deletingId === m.id}
+                          title="Excluir definitivamente (LGPD)"
+                          className="p-1.5 rounded-full text-[#444746] hover:text-[#b3261e] hover:bg-[#f9dedc] transition-colors"
+                          data-testid={`delete-${m.id}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
                   </div>
                 </div>
                 <h3 className="text-base font-medium text-[#1f1f1f] group-hover:text-[#0b57d0] transition-colors line-clamp-2">

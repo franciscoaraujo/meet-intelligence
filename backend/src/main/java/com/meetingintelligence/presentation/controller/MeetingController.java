@@ -38,11 +38,13 @@ public class MeetingController {
     }
 
     @GetMapping
-    @Operation(summary = "Listar reuniões da organização", description = "Retorna reuniões paginadas")
+    @Operation(summary = "Listar reuniões da organização",
+            description = "Retorna reuniões paginadas; por padrão só as ativas, archived=true traz as arquivadas (spec 020)")
     public ResponseEntity<Page<MeetingResponse>> listMeetings(
             @AuthenticationPrincipal UserPrincipal currentUser,
+            @RequestParam(defaultValue = "false") boolean archived,
             @PageableDefault(sort = "createdAt", direction = Sort.Direction.DESC) Pageable pageable) {
-        Page<MeetingResponse> page = meetingService.listMeetings(currentUser.getOrganizationId(), pageable);
+        Page<MeetingResponse> page = meetingService.listMeetings(currentUser.getOrganizationId(), archived, pageable);
         return ResponseEntity.ok(page);
     }
 
@@ -90,6 +92,18 @@ public class MeetingController {
             @org.springframework.security.core.annotation.AuthenticationPrincipal
             com.meetingintelligence.infrastructure.security.UserPrincipal currentUser) {
         return ResponseEntity.ok(meetingService.updateAnswerStyle(id, currentUser.getOrganizationId(), style));
+    }
+
+    @PostMapping("/{id}/archive")
+    @Operation(summary = "Arquivar reunião", description = "Spec 020: sai da lista principal; nenhum dado é apagado")
+    public ResponseEntity<MeetingResponse> archive(@PathVariable UUID id, @AuthenticationPrincipal UserPrincipal currentUser) {
+        return ResponseEntity.ok(meetingService.setArchived(id, currentUser.getOrganizationId(), true));
+    }
+
+    @PostMapping("/{id}/unarchive")
+    @Operation(summary = "Restaurar reunião arquivada", description = "Spec 020: volta para a lista principal")
+    public ResponseEntity<MeetingResponse> unarchive(@PathVariable UUID id, @AuthenticationPrincipal UserPrincipal currentUser) {
+        return ResponseEntity.ok(meetingService.setArchived(id, currentUser.getOrganizationId(), false));
     }
 
     @DeleteMapping("/{id}")
