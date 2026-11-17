@@ -184,13 +184,24 @@ class TranscriptionServiceTest {
     }
 
     @Test
-    @DisplayName("Spec 017: transcrição de outro provedor não registra uso de STT")
+    @DisplayName("Spec 017/018: transcrição de provedor sem preço (Gemini) não registra uso de STT")
     void otherProviderDoesNotRecordUsage() {
-        when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Pergunta"));
+        when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("GEMINI", "Pergunta"));
 
         transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
 
         verify(sttUsageRecorder, never()).record(any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("Spec 018 CA-04: trecho transcrito pelo Deepgram registra o uso")
+    void deepgramTranscriptionRecordsUsage() {
+        TranscriptionChainResult result = transcribed("DEEPGRAM", "Fale sobre você");
+        when(speechToTextRouter.transcribe(any(), any())).thenReturn(result);
+
+        transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
+
+        verify(sttUsageRecorder).record(eq(meeting), any(), eq(result));
     }
 
     @Test

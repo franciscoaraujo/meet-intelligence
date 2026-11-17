@@ -100,7 +100,7 @@ class SttUsageRecorderTest {
 
         recorder.record(meeting, live, new TranscriptionChainResult(TranscriptionChainResult.Status.FAILED, null, List.of(),
                 List.of(new Attempt("GROK_STT", "FAILED", FailureReason.HTTP_5XX, "HTTP 503", 10))));
-        recorder.record(meeting, live, new TranscriptionChainResult(TranscriptionChainResult.Status.TRANSCRIBED, "DEEPGRAM",
+        recorder.record(meeting, live, new TranscriptionChainResult(TranscriptionChainResult.Status.TRANSCRIBED, "GEMINI",
                 grok(TranscriptionChainResult.Status.TRANSCRIBED, 1).segments(), List.of()));
         recorder.record(Meeting.builder().id(UUID.randomUUID()).build(), live, grok(TranscriptionChainResult.Status.TRANSCRIBED, 1));
 
@@ -114,5 +114,34 @@ class SttUsageRecorderTest {
         SttRequest live = new SttRequest(wav(5_000), "audio/wav", "pt-BR", SttRequest.Mode.LIVE);
 
         recorder.record(meeting, live, grok(TranscriptionChainResult.Status.TRANSCRIBED, 1));
+    }
+
+    @Test
+    @DisplayName("Spec 018 CA-04: Deepgram registra DEEPGRAM / nova-3 a US$ 0,258 por hora")
+    void deepgramUsage() {
+        SttRequest live = new SttRequest(wav(60_000), "audio/wav", "pt-BR", SttRequest.Mode.LIVE);
+        TranscriptionChainResult result = new TranscriptionChainResult(TranscriptionChainResult.Status.TRANSCRIBED,
+                "DEEPGRAM", grok(TranscriptionChainResult.Status.TRANSCRIBED, 1).segments(),
+                List.of(new Attempt("DEEPGRAM", "TRANSCRIBED", null, null, 420)));
+
+        recorder.record(meeting, live, result);
+
+        LLMUsage u = saved();
+        assertThat(u.getProvider()).isEqualTo("DEEPGRAM");
+        assertThat(u.getModelName()).isEqualTo("nova-3");
+        assertThat(u.getOperationType()).isEqualTo("STT_LIVE");
+        assertThat(u.getEstimatedCostUsd()).isEqualByComparingTo("0.004300");
+        assertThat(u.getLatencyMs()).isEqualTo(420L);
+    }
+
+    @Test
+    @DisplayName("Spec 018 RF-02: Gemini, gpt-transcribe e STT local não têm preço e não registram")
+    void providersWithoutPrice() {
+        for (String p : List.of("GEMINI", "OPENAI_TRANSCRIBE", "LOCAL_GOOGLE_STT", "SIMULATION")) {
+            assertThat(SttUsageRecorder.applies(new TranscriptionChainResult(TranscriptionChainResult.Status.NO_SPEECH,
+                    p, List.of(), List.of()))).as(p).isFalse();
+        }
+        assertThat(SttUsageRecorder.applies(new TranscriptionChainResult(TranscriptionChainResult.Status.NO_SPEECH,
+                "DEEPGRAM", List.of(), List.of()))).isTrue();
     }
 }

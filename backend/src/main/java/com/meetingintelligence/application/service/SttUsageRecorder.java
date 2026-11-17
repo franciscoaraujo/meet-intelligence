@@ -7,6 +7,7 @@ import com.meetingintelligence.domain.speech.SttRequest;
 import com.meetingintelligence.domain.speech.TranscriptionChainResult;
 import com.meetingintelligence.domain.speech.TranscriptionSegmentDto;
 import com.meetingintelligence.infrastructure.persistence.repository.LLMUsageRepository;
+import com.meetingintelligence.infrastructure.speech.DeepgramSpeechToTextProvider;
 import com.meetingintelligence.infrastructure.speech.GrokSttProvider;
 import com.meetingintelligence.infrastructure.speech.WavAudioInspector;
 import lombok.RequiredArgsConstructor;
@@ -17,8 +18,9 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Registra em {@code llm_usage} o áudio transcrito pelo Grok (spec 017, RF-07): base para cotas e
- * cobrança por hora. A xAI cobra pelo áudio enviado, então "sem fala" também conta.
+ * Registra em {@code llm_usage} o áudio transcrito pelos provedores com preço conhecido: Grok
+ * (spec 017, RF-07) e Deepgram (spec 018, RF-02). É a base para cotas e cobrança por hora. Os
+ * provedores cobram pelo áudio enviado, então "sem fala" também conta.
  */
 @Component
 @RequiredArgsConstructor
@@ -31,9 +33,20 @@ public class SttUsageRecorder {
     private final LLMUsageRepository usageRepository;
     private final GrokSttProvider grok;
 
-    /** O resultado veio do Grok e o áudio foi processado (com ou sem fala)? */
+    /** Preço por provedor da cadeia: nome em llm_usage e US$ por hora de áudio. */
+    private record Price(String provider, double usdPerHour) {}
+
+    private static Price priceOf(String chainProvider) {
+        if (GrokSttProvider.NAME.equals(chainProvider)) return new Price("GROK", AiModels.GROK_STT_USD_PER_HOUR);
+        if (DeepgramSpeechToTextProvider.NAME.equals(chainProvider)) {
+            return new Price("DEEPGRAM", AiModels.DEEPGRAM_STT_USD_PER_HOUR);
+        }
+        return null;
+    }
+
+    /** O áudio foi processado (com ou sem fala) por um provedor com preço conhecido? */
     public static boolean applies(TranscriptionChainResult result) {
-        return result != null && GrokSttProvider.NAME.equals(result.provider())
+        return result != null && priceOf(result.provider()) != null
                 && result.status() != TranscriptionChainResult.Status.FAILED;
     }
 
@@ -42,16 +55,18 @@ public class SttUsageRecorder {
 
         try {
             long durationMs = audioDurationMs(request, result);
+            Price price = priceOf(result.provider());
+            String model = GrokSttProvider.NAME.equals(result.provider()) ? grok.model() : AiModels.DEEPGRAM_STT;
             usageRepository.save(LLMUsage.builder()
                     .organization(meeting.getOrganization())
                     .meeting(meeting)
-                    .provider("GROK")
-                    .modelName(grok.model())
+                    .provider(price.provider())
+                    .modelName(model)
                     .operationType(request.mode() == SttRequest.Mode.BATCH ? OPERATION_BATCH : OPERATION_LIVE)
                     .promptTokens(0)
                     .completionTokens(0)
                     .totalTokens(0)
-                    .estimatedCostUsd(costUsd(durationMs))
+                    .estimatedCostUsd(costUsd(durationMs, price.usdPerHour()))
                     .latencyMs(latencyMs(result))
                     .build());
         } catch (Exception e) {
@@ -70,15 +85,15 @@ public class SttUsageRecorder {
                 .max().orElse(0L);
     }
 
-    static BigDecimal costUsd(long durationMs) {
+    static BigDecimal costUsd(long durationMs, double usdPerHour) {
         return BigDecimal.valueOf(durationMs)
-                .multiply(BigDecimal.valueOf(AiModels.GROK_STT_USD_PER_HOUR))
+                .multiply(BigDecimal.valueOf(usdPerHour))
                 .divide(BigDecimal.valueOf(3_600_000L), 6, RoundingMode.HALF_UP);
     }
 
     private static long latencyMs(TranscriptionChainResult result) {
         return result.attempts().stream()
-                .filter(a -> GrokSttProvider.NAME.equals(a.provider()))
+                .filter(a -> a.provider() != null && a.provider().equals(result.provider()))
                 .reduce((first, second) -> second)
                 .map(TranscriptionChainResult.Attempt::latencyMs)
                 .orElse(0L);
