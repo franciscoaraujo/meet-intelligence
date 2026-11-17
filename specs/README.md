@@ -20,6 +20,7 @@ Ponto de partida: [000-discovery/diagnostico.md](000-discovery/diagnostico.md).
 | [014](014-answer-style/spec.md) | Estilo das respostas: padrão, informal, formal, técnica | P2 | **Validada** (170 backend + 108 frontend; entrevista real em 2026-11-16) |
 | [015](015-question-context/spec.md) | Contexto da pergunta: o cenário dito antes acompanha a pergunta | P1 | **Validada** (180 backend + 114 frontend; entrevista real em 2026-11-16) |
 | [016](016-multi-part-question/spec.md) | Pergunta em várias partes: o complemento entra no mesmo card | P1 | **Validada** (224 backend + 120 frontend; entrevista real em 2026-11-16) |
+| [017](017-grok-transcription/spec.md) | Transcrição com o Grok: uma chave xAI para transcrição e respostas | P1 | **Implementada** (246 backend + 120 frontend; falta entrevista real) |
 
 ## Ordem de implementação proposta
 Cada etapa só começa com a anterior verde (testes passando e critérios de aceite atendidos).

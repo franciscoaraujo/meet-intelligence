@@ -39,6 +39,12 @@ public final class AiModels {
     /** Deepgram pré-gravado: recomendado para reuniões com vários falantes; suporta pt-BR. */
     public static final String DEEPGRAM_STT = "nova-3";
 
+    /** xAI speech-to-text (spec 017): a mesma chave do Grok das respostas. Alternativa: grok-voice-transcribe-1.0. */
+    public static final String GROK_STT = "grok-voice-transcribe-2.0";
+
+    /** Preço publicado do STT REST da xAI, em US$ por hora de áudio (consultado em 2026-11-16). */
+    public static final double GROK_STT_USD_PER_HOUR = 0.10;
+
     /**
      * Embeddings: continua ativo. Não trocar sem migrar a coluna vector(1536) e
      * reindexar os embeddings já gravados.

@@ -20,6 +20,11 @@ class TranscriptionChainFactoryTest {
 
     private TranscriptionChainFactory factory(String serverOpenAi, String serverDeepgram,
                                               boolean localEnabled, boolean simulationEnabled) {
+        return factory(serverOpenAi, serverDeepgram, "mock-key", localEnabled, simulationEnabled);
+    }
+
+    private TranscriptionChainFactory factory(String serverOpenAi, String serverDeepgram, String serverXai,
+                                              boolean localEnabled, boolean simulationEnabled) {
         StaticListableBeanFactory beans = new StaticListableBeanFactory();
         if (localEnabled) beans.addBean("local", new LocalGoogleSttProvider());
         if (simulationEnabled) beans.addBean("sim", new SimulatedSttProvider());
@@ -27,7 +32,7 @@ class TranscriptionChainFactoryTest {
         ObjectProvider<SimulatedSttProvider> sim = beans.getBeanProvider(SimulatedSttProvider.class);
         return new TranscriptionChainFactory(new GeminiAudioSttProvider(http, mapper),
                 new OpenAiTranscribeSttProvider(http, mapper), new DeepgramSpeechToTextProvider(http, mapper),
-                local, sim, serverOpenAi, serverDeepgram);
+                new GrokSttProvider(http, mapper), local, sim, serverOpenAi, serverDeepgram, serverXai);
     }
 
     private static List<String> names(List<ChainStep> steps) {
@@ -86,5 +91,63 @@ class TranscriptionChainFactoryTest {
         assertThat(names(factory("mock-key", "mock-key", false, false).build(null, SttRequest.Mode.LIVE))).isEmpty();
         assertThat(names(factory("sk", "mock-key", false, true).build(null, SttRequest.Mode.LIVE)))
                 .containsExactly("OPENAI_TRANSCRIBE", "SIMULATION");
+    }
+
+    // ------------------------------------------------------------------ spec 017
+
+    private static OrganizationAiConfig orgWith(String gemini, String openAi, String grok) {
+        OrganizationAiConfig cfg = orgWith(gemini, openAi);
+        cfg.setGrokApiKey(grok);
+        return cfg;
+    }
+
+    @Test
+    @DisplayName("Spec 017 RF-03: ordem ao vivo completa com o Grok da org e do servidor")
+    void liveOrderWithGrok() {
+        var steps = factory("sk-server", "dg-server", "xai-server", true, true)
+                .build(orgWith("AIza-org", "sk-org", "xai-org"), SttRequest.Mode.LIVE);
+
+        assertThat(names(steps)).containsExactly("GEMINI", "OPENAI_TRANSCRIBE", "GROK_STT", "DEEPGRAM",
+                "OPENAI_TRANSCRIBE", "GROK_STT", "LOCAL_GOOGLE_STT", "SIMULATION");
+        assertThat(steps.get(2).credentials().apiKey()).isEqualTo("xai-org");
+        assertThat(steps.get(5).credentials().apiKey()).isEqualTo("xai-server");
+    }
+
+    @Test
+    @DisplayName("Spec 017 CA-05: com Gemini e xAI na org, o Gemini vem antes do Grok")
+    void geminiBeforeGrok() {
+        var steps = factory("mock-key", "mock-key", false, false)
+                .build(orgWith("AIza-org", null, "xai-org"), SttRequest.Mode.LIVE);
+
+        assertThat(names(steps)).containsExactly("GEMINI", "GROK_STT");
+    }
+
+    @Test
+    @DisplayName("Spec 017 CA-05/CA-01: só xAI na org e Deepgram no servidor: Grok antes do Deepgram, antes do STT local")
+    void onlyGrokOrgKeyComesFirst() {
+        var steps = factory("mock-key", "dg-server", true, false)
+                .build(orgWith(null, null, "xai-org"), SttRequest.Mode.LIVE);
+
+        assertThat(names(steps)).containsExactly("GROK_STT", "DEEPGRAM", "LOCAL_GOOGLE_STT");
+    }
+
+    @Test
+    @DisplayName("Spec 017 RF-05: useOrganizationKeys=false ignora também a chave xAI da org")
+    void grokOrgKeyRespectsFlag() {
+        OrganizationAiConfig cfg = orgWith(null, null, "xai-org");
+        cfg.setUseOrganizationKeys(false);
+
+        assertThat(factory("mock-key", "mock-key", false, false).build(cfg, SttRequest.Mode.LIVE)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("Spec 017 RF-04/CA-06: gravação enviada usa o Grok do servidor, depois de OpenAI e Deepgram")
+    void batchOrderWithGrok() {
+        assertThat(names(factory("sk-server", "dg-server", "xai-server", false, false)
+                .build(orgWith(null, null, "xai-org"), SttRequest.Mode.BATCH)))
+                .containsExactly("OPENAI_TRANSCRIBE", "DEEPGRAM", "GROK_STT");
+        assertThat(names(factory("mock-key", "mock-key", "xai-server", false, false)
+                .build(null, SttRequest.Mode.BATCH)))
+                .containsExactly("GROK_STT");
     }
 }
