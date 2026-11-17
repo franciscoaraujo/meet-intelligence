@@ -54,6 +54,10 @@ public class Meeting {
     @Column(name = "actual_end")
     private OffsetDateTime actualEnd;
 
+    /** Spec 020: arquivada (fora da lista principal, dados intactos); null = ativa. */
+    @Column(name = "archived_at")
+    private OffsetDateTime archivedAt;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 50)
     @Builder.Default

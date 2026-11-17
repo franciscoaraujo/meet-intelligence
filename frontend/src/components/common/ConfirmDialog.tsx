@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 
 interface Props {
@@ -16,15 +16,32 @@ interface Props {
   error?: string | null;
   onConfirm: () => void;
   onCancel: () => void;
+  /**
+   * Spec 020 RF-11: confirmação digitada. O botão só libera quando o texto digitado é igual (sem
+   * diferenciar maiúsculas) a um dos valores aceitos.
+   */
+  requireTyping?: { accepted: string[]; label: React.ReactNode };
 }
+
+/** Texto digitado confere com um dos valores aceitos (ignora espaços nas pontas e maiúsculas). */
+export const typedConfirmationMatches = (typed: string, accepted: string[]): boolean => {
+  const t = typed.trim().toLowerCase();
+  return t.length > 0 && accepted.some((a) => a.trim().toLowerCase() === t);
+};
 
 /** Diálogo de confirmação do app, no lugar de window.confirm (spec 013). Fecha com Esc ou clique fora. */
 export const ConfirmDialog: React.FC<Props> = ({
   open, title, description, confirmLabel = 'Confirmar', cancelLabel = 'Cancelar', destructive = false,
-  busy = false, busyLabel, error, onConfirm, onCancel,
+  busy = false, busyLabel, error, onConfirm, onCancel, requireTyping,
 }) => {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const [typed, setTyped] = useState('');
+  const typingOk = !requireTyping || typedConfirmationMatches(typed, requireTyping.accepted);
+
+  useEffect(() => {
+    if (open) setTyped('');
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -65,6 +82,21 @@ export const ConfirmDialog: React.FC<Props> = ({
           </div>
         </div>
 
+        {requireTyping && (
+          <label className="block space-y-1.5">
+            <span className="text-xs text-[#3c4043]">{requireTyping.label}</span>
+            <input
+              type="text"
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              disabled={busy}
+              autoComplete="off"
+              className="w-full h-9 px-3 rounded-lg border border-[#dadce0] text-sm focus:outline-none focus:border-[#d93025]"
+              data-testid="confirm-typing"
+            />
+          </label>
+        )}
+
         {error && (
           <p role="alert" className="text-xs text-[#d93025] bg-[#fce8e6] rounded-lg px-3 py-2">{error}</p>
         )}
@@ -83,7 +115,7 @@ export const ConfirmDialog: React.FC<Props> = ({
             ref={confirmRef}
             type="button"
             onClick={onConfirm}
-            disabled={busy}
+            disabled={busy || !typingOk}
             className={`h-9 px-4 rounded-lg text-sm font-semibold text-white inline-flex items-center gap-2 cursor-pointer disabled:opacity-70 ${
               destructive ? 'bg-[#d93025] hover:bg-[#b3261e]' : 'bg-[#1a73e8] hover:bg-[#1765cc]'
             }`}

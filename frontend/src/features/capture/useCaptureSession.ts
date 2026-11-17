@@ -131,10 +131,18 @@ export const useCaptureSession = (options: CaptureSessionOptions) => {
     await pipeline.uploader.flush(STOP_FLUSH_TIMEOUT_MS);
   };
 
-  const startTab = useCallback(async () => {
+  /**
+   * Abre o compartilhamento de áudio. Devolve true se a fonte ficou ativa; false se a pessoa cancelou,
+   * negou ou a fonte não tem áudio (spec 020, RF-01: nesse caso a sessão não é iniciada).
+   */
+  const startTab = useCallback(async (): Promise<boolean> => {
     await stopPipeline('TAB');
     setView('TAB', { lastError: null });
-    await buildPipeline('TAB').source.start();
+    const { source } = buildPipeline('TAB');
+    await source.start();
+    const active = source.currentState === 'ATIVA_SILENCIO' || source.currentState === 'ATIVA_FALANDO';
+    if (!active && pipelines.current.TAB?.source === source) delete pipelines.current.TAB;
+    return active;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -174,8 +182,13 @@ export const useCaptureSession = (options: CaptureSessionOptions) => {
     await stopPipeline('MIC');
   };
 
-  const startRecording = useCallback(async () => {
+  /**
+   * Inicia a sessão (cronômetro, "Encerrar"). Com withMic=false a sessão começa sem ligar o microfone:
+   * é o caso de quem começou pelo "Áudio do computador" (spec 020, RF-02).
+   */
+  const startRecording = useCallback(async (opts?: { withMic?: boolean }) => {
     setIsRecording(true);
+    if (opts?.withMic === false) return;
     await startMic(micMode);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [micMode]);

@@ -15,6 +15,12 @@ import java.util.UUID;
 public interface MeetingRepository extends JpaRepository<Meeting, UUID> {
     Page<Meeting> findByOrganizationId(UUID organizationId, Pageable pageable);
 
+    /** Spec 020: reuniões ativas (não arquivadas) da organização. */
+    Page<Meeting> findByOrganizationIdAndArchivedAtIsNull(UUID organizationId, Pageable pageable);
+
+    /** Spec 020: reuniões arquivadas da organização. */
+    Page<Meeting> findByOrganizationIdAndArchivedAtIsNotNull(UUID organizationId, Pageable pageable);
+
     /** Spec 007: a reunião é desta organização? (guarda das rotas e do WebSocket) */
     boolean existsByIdAndOrganization_Id(UUID id, UUID organizationId);
     List<Meeting> findByCreatedByIdOrderByCreatedAtDesc(UUID userId);

@@ -297,11 +297,24 @@ public class TranscriptionService {
      * Grava uma fala, fundindo com o segmento anterior do mesmo falante quando é continuação.
      * Publica no WebSocket e alimenta o agregador de IA.
      */
+    /**
+     * Spec 020 RF-07: a primeira fala transcrita de uma reunião agendada a coloca em andamento, mesmo que
+     * o navegador não tenha conseguido marcar o status (falha de rede, aba fechada).
+     */
+    private void markInProgressOnFirstSpeech(Meeting meeting) {
+        if (meeting.getStatus() == com.meetingintelligence.domain.enums.MeetingStatus.SCHEDULED) {
+            meeting.setStatus(com.meetingintelligence.domain.enums.MeetingStatus.IN_PROGRESS);
+            if (meeting.getActualStart() == null) meeting.setActualStart(java.time.OffsetDateTime.now());
+            meetingRepository.save(meeting);
+        }
+    }
+
     private TranscriptSegment persistSpeech(Meeting meeting, SpeakerAttributionService.SpeakerAttribution speaker,
                                             String text, long startTimeMs, long endTimeMs, String provider,
                                             AudioSource audioSource, Long captureStartMs, Long captureEndMs) {
         String cleanText = text != null ? text.trim() : "";
         long safeEnd = endTimeMs > startTimeMs ? endTimeMs : startTimeMs + 3000L;
+        markInProgressOnFirstSpeech(meeting);
 
         // Continuação de uma fala imediatamente anterior do mesmo locutor (pausa curta)
         List<TranscriptSegment> existingSegments = segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meeting.getId());

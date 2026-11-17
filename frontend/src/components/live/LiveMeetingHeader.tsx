@@ -32,6 +32,9 @@ interface Props {
   isRecording: boolean;
   elapsed: string;
   onToggleRecording: () => void;
+  /** Spec 020 RF-06: reunião em andamento sem captura neste navegador ("Retomar" + "Encerrar sessão"). */
+  canResume?: boolean;
+  onEndSession?: () => void;
 }
 
 const CONSENT_TEXT =
@@ -208,9 +211,22 @@ export const LiveMeetingHeader: React.FC<Props> = (p) => {
           )}
         </div>
 
+        {p.canResume && !p.isRecording && p.onEndSession && (
+          <button
+            type="button"
+            onClick={p.onEndSession}
+            className={ghost}
+            title="Marca a reunião como concluída e gera a análise final, sem capturar mais áudio"
+            data-testid="end-session"
+          >
+            <Square className="w-3 h-3" /> Encerrar sessão
+          </button>
+        )}
+
         <button
           type="button"
           onClick={p.onToggleRecording}
+          title={p.isRecording ? undefined : 'Compartilha o áudio da reunião e começa a transcrever'}
           className={`inline-flex items-center gap-2 h-8 px-3.5 rounded-lg text-xs font-semibold text-white transition-colors cursor-pointer whitespace-nowrap ${
             p.isRecording ? 'bg-[#d93025] hover:bg-[#b3261e]' : 'bg-[#1a73e8] hover:bg-[#1765cc]'
           }`}
@@ -225,7 +241,7 @@ export const LiveMeetingHeader: React.FC<Props> = (p) => {
             </>
           ) : (
             <>
-              <Mic className="w-3.5 h-3.5" /> Iniciar captura
+              <Mic className="w-3.5 h-3.5" /> {p.canResume ? 'Retomar' : 'Iniciar'}
             </>
           )}
         </button>

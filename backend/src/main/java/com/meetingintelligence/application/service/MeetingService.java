@@ -105,8 +105,27 @@ public class MeetingService {
 
     @Transactional(readOnly = true)
     public Page<MeetingResponse> listMeetings(UUID organizationId, Pageable pageable) {
-        return meetingRepository.findByOrganizationId(organizationId, pageable)
-                .map(this::mapToResponse);
+        return listMeetings(organizationId, false, pageable);
+    }
+
+    /** Spec 020 RF-09: por padrão só as ativas; archived=true traz as arquivadas. */
+    @Transactional(readOnly = true)
+    public Page<MeetingResponse> listMeetings(UUID organizationId, boolean archived, Pageable pageable) {
+        Page<Meeting> page = archived
+                ? meetingRepository.findByOrganizationIdAndArchivedAtIsNotNull(organizationId, pageable)
+                : meetingRepository.findByOrganizationIdAndArchivedAtIsNull(organizationId, pageable);
+        return page.map(this::mapToResponse);
+    }
+
+    /** Spec 020 RF-08: arquivar só esconde da lista; nenhum dado é apagado. */
+    @Transactional
+    public MeetingResponse setArchived(UUID meetingId, UUID organizationId, boolean archived) {
+        Meeting meeting = meetingRepository.findById(meetingId)
+                .filter(m -> m.getOrganization() != null && m.getOrganization().getId().equals(organizationId))
+                .orElseThrow(() -> new com.meetingintelligence.application.exception.ResourceNotFoundException(
+                        "Reunião não encontrada: " + meetingId));
+        meeting.setArchivedAt(archived ? (meeting.getArchivedAt() != null ? meeting.getArchivedAt() : OffsetDateTime.now()) : null);
+        return mapToResponse(meetingRepository.save(meeting));
     }
 
     @Transactional(readOnly = true)
@@ -121,9 +140,16 @@ public class MeetingService {
         Meeting meeting = meetingRepository.findById(meetingId)
                 .orElseThrow(() -> new IllegalArgumentException("Reunião não encontrada: " + meetingId));
 
+        // Spec 020 RN-02: uma reunião que já começou nunca volta a "agendada"
+        if (status == MeetingStatus.SCHEDULED && meeting.getStatus() != MeetingStatus.SCHEDULED) {
+            throw new IllegalArgumentException("Uma reunião que já começou não volta a ficar agendada.");
+        }
+        MeetingStatus previous = meeting.getStatus();
         meeting.setStatus(status);
-        if (status == MeetingStatus.IN_PROGRESS && meeting.getActualStart() == null) {
-            meeting.setActualStart(OffsetDateTime.now());
+        if (status == MeetingStatus.IN_PROGRESS) {
+            if (meeting.getActualStart() == null) meeting.setActualStart(OffsetDateTime.now());
+            // "Retomar" uma concluída: o fim volta a ser marcado no próximo "Encerrar"
+            if (previous == MeetingStatus.COMPLETED) meeting.setActualEnd(null);
         } else if (status == MeetingStatus.COMPLETED && meeting.getActualEnd() == null) {
             meeting.setActualEnd(OffsetDateTime.now());
         }
@@ -185,6 +211,7 @@ public class MeetingService {
                 .scheduledEnd(m.getScheduledEnd())
                 .actualStart(m.getActualStart())
                 .actualEnd(m.getActualEnd())
+                .archivedAt(m.getArchivedAt())
                 .status(m.getStatus())
                 .googleMeetLink(m.getGoogleMeetLink())
                 .googleCalendarEventId(m.getGoogleCalendarEventId())

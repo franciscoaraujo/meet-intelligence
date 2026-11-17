@@ -91,4 +91,25 @@ describe('LiveMeetingHeader (spec 013)', () => {
     fireEvent.change(select, { target: { value: 'TECHNICAL' } });
     expect(p.onAnswerStyleChange).toHaveBeenCalledWith('TECHNICAL');
   });
+
+  it('spec 020 RF-01: parado, o botão principal é "Iniciar"', () => {
+    render(<LiveMeetingHeader {...props()} />);
+    expect(screen.getByTestId('recording-toggle').textContent).toContain('Iniciar');
+    expect(screen.queryByTestId('end-session')).toBeNull();
+  });
+
+  it('spec 020 RF-06: reunião em andamento sem captura mostra "Retomar" e "Encerrar sessão"', () => {
+    const onEndSession = vi.fn();
+    const p = props({ canResume: true, onEndSession });
+    render(<LiveMeetingHeader {...p} />);
+
+    expect(screen.getByTestId('recording-toggle').textContent).toContain('Retomar');
+    fireEvent.click(screen.getByTestId('end-session'));
+    expect(onEndSession).toHaveBeenCalled();
+  });
+
+  it('spec 020: gravando, não aparece "Encerrar sessão" (o próprio botão encerra)', () => {
+    render(<LiveMeetingHeader {...props({ isRecording: true, canResume: true, onEndSession: vi.fn() })} />);
+    expect(screen.queryByTestId('end-session')).toBeNull();
+  });
 });

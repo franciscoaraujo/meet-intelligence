@@ -247,4 +247,29 @@ describe('useCaptureSession', () => {
     expect(sendChunk).not.toHaveBeenCalled();
     expect(env.getUserMedia).not.toHaveBeenCalled();
   });
+
+  describe('spec 020: início da sessão', () => {
+    it('RF-01: startTab devolve true quando o compartilhamento é aceito', async () => {
+      const { hook } = setup();
+      let ok = false;
+      await act(async () => { ok = await hook.result.current.startTab(); });
+      expect(ok).toBe(true);
+      expect(hook.result.current.tab.state).toBe('ATIVA_SILENCIO');
+    });
+
+    it('RF-01: startTab devolve false quando a pessoa cancela o compartilhamento', async () => {
+      const { hook } = setup({ tab: 'NotAllowedError' });
+      let ok = true;
+      await act(async () => { ok = await hook.result.current.startTab(); });
+      expect(ok).toBe(false);
+      expect(hook.result.current.isRecording).toBe(false);
+    });
+
+    it('RF-02: startRecording({ withMic: false }) inicia a sessão sem ligar o microfone', async () => {
+      const { hook } = setup();
+      await act(() => hook.result.current.startRecording({ withMic: false }));
+      expect(hook.result.current.isRecording).toBe(true);
+      expect(hook.result.current.mic.state).toBe('INATIVA');
+    });
+  });
 });

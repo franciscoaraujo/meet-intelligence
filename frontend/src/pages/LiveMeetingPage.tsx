@@ -24,6 +24,7 @@ import { LiveMeetingHeader } from '../components/live/LiveMeetingHeader';
 import { mergeById, upsertById } from '../features/live/mergeById';
 import { useStickToBottom } from '../features/live/useStickToBottom';
 import { loadInterviewModePreference, saveInterviewModePreference, complementsOf, partsOf } from '../features/live/interviewMode';
+import { createSessionActions, type SessionStatus } from '../features/live/captureSession';
 import { saveLanguagePreference, toInterviewLanguage, type InterviewLanguageTag } from '../features/live/interviewLanguage';
 import { saveAnswerStylePreference, toAnswerStyle, type AnswerStyle } from '../features/live/answerStyle';
 import { useCaptureSession } from '../features/capture/useCaptureSession';
@@ -179,6 +180,17 @@ export const LiveMeetingPage: React.FC = () => {
       };
     }
   }, [id]);
+
+  // Spec 020 RF-05: fechar ou recarregar com a sessão aberta pede confirmação
+  useEffect(() => {
+    if (!isRecording) return;
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [isRecording]);
 
   useEffect(() => {
     if (isRecording) {
@@ -402,23 +414,26 @@ export const LiveMeetingPage: React.FC = () => {
     }
   };
 
-  const toggleRecording = async () => {
-    if (!capture.isRecording) {
-      await api.patch(`/meetings/${id}/status?status=IN_PROGRESS`).catch(() => {});
-      await capture.startRecording();
-    } else {
-      await stopRecording();
-    }
+  /** Marca a reunião no servidor e na tela (spec 020). */
+  const markStatus = async (status: SessionStatus) => {
+    if (!id) return;
+    await api.patch(`/meetings/${id}/status?status=${status}`).catch(() => {});
+    setMeeting((m) => (m ? { ...m, status } : m));
   };
 
-  /** Encerra todas as fontes (enviando os trechos pendentes) e consolida a reunião com IA. */
-  const stopRecording = async () => {
-    await capture.stopRecording();
-    if (id) {
-      await api.patch(`/meetings/${id}/status?status=COMPLETED`).catch(() => {});
-      triggerAiAnalysis();
-    }
-  };
+  // Spec 020: início e fim da captura num lugar só (lógica em features/live/captureSession)
+  const session = createSessionActions({
+    startTab: () => capture.startTab(),
+    stopTab: () => capture.stopTab(),
+    startRecording: (opts) => capture.startRecording(opts),
+    stopRecording: () => capture.stopRecording(),
+    isRecording: () => capture.isRecording,
+    tabOn: () => tabCaptureOn,
+    meetingStatus: () => meeting?.status,
+    interviewMode: () => !!interviewMode,
+    markStatus,
+    triggerAnalysis: () => void triggerAiAnalysis(),
+  });
 
   const triggerAiAnalysis = async () => {
     if (!id || analyzing) return;
@@ -680,7 +695,7 @@ export const LiveMeetingPage: React.FC = () => {
         interviewMode={!!interviewMode}
         onToggleInterviewMode={toggleInterviewMode}
         computerAudioOn={tabCaptureOn}
-        onToggleComputerAudio={() => void (tabCaptureOn ? capture.stopTab() : capture.startTab())}
+        onToggleComputerAudio={() => void session.toggleComputerAudio()}
         manualPending={manualPending}
         onQuestionFinished={() => void answerLatestQuestion()}
         analyzing={analyzing}
@@ -691,7 +706,9 @@ export const LiveMeetingPage: React.FC = () => {
         onMicModeChange={(mode) => void capture.setMicMode(mode)}
         isRecording={isRecording}
         elapsed={formatTime(recordingSeconds)}
-        onToggleRecording={() => void toggleRecording()}
+        onToggleRecording={() => void session.toggle()}
+        canResume={meeting?.status === 'IN_PROGRESS' && !isRecording}
+        onEndSession={() => void session.endWithoutCapture()}
       />
 
       {/* Grid Principal: 3 ÁREAS */}

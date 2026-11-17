@@ -205,6 +205,31 @@ class TranscriptionServiceTest {
     }
 
     @Test
+    @DisplayName("Spec 020 CA-06: a primeira fala transcrita de uma reunião agendada a coloca em andamento")
+    void firstSpeechMarksInProgress() {
+        meeting.setStatus(com.meetingintelligence.domain.enums.MeetingStatus.SCHEDULED);
+        when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Fale sobre você"));
+
+        transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
+
+        assertThat(meeting.getStatus()).isEqualTo(com.meetingintelligence.domain.enums.MeetingStatus.IN_PROGRESS);
+        assertThat(meeting.getActualStart()).isNotNull();
+        verify(meetingRepository).save(meeting);
+    }
+
+    @Test
+    @DisplayName("Spec 020 RN-02: reunião já concluída não muda de status com fala nova")
+    void speechDoesNotChangeCompletedMeeting() {
+        meeting.setStatus(com.meetingintelligence.domain.enums.MeetingStatus.COMPLETED);
+        when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Mais uma coisa"));
+
+        transcriptionService.processAudioChunk(chunk(UUID.randomUUID()), orgId, userId);
+
+        assertThat(meeting.getStatus()).isEqualTo(com.meetingintelligence.domain.enums.MeetingStatus.COMPLETED);
+        verify(meetingRepository, never()).save(meeting);
+    }
+
+    @Test
     @DisplayName("CA-06: o mesmo clientSegmentId devolve o resultado anterior sem nova transcrição")
     void sameClientSegmentIdIsIdempotent() {
         when(speechToTextRouter.transcribe(any(), any())).thenReturn(transcribed("DEEPGRAM", "Pergunta um"));

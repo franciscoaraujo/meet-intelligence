@@ -23,6 +23,8 @@ public class MeetingResponse {
     private OffsetDateTime scheduledEnd;
     private OffsetDateTime actualStart;
     private OffsetDateTime actualEnd;
+    /** Spec 020: data do arquivamento; null = ativa. */
+    private OffsetDateTime archivedAt;
     private MeetingStatus status;
     private String googleMeetLink;
     private String googleCalendarEventId;
