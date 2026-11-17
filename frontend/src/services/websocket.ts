@@ -47,6 +47,14 @@ export class MeetingWebSocketService {
 
     this.client = new Client({
       webSocketFactory: () => new SockJS(socketUrl),
+      // Spec 007 RF-07: o servidor só aceita a conexão com o token do usuário logado.
+      // beforeConnect relê o token a cada (re)conexão, caso ele tenha sido renovado.
+      beforeConnect: () => {
+        const token = localStorage.getItem('token');
+        if (this.client) {
+          this.client.connectHeaders = token ? { Authorization: `Bearer ${token}` } : {};
+        }
+      },
       reconnectDelay: 5000,
       heartbeatIncoming: 4000,
       heartbeatOutgoing: 4000,

@@ -8,6 +8,7 @@ import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
@@ -38,12 +39,16 @@ public class AuthController {
         boolean configured = clientId != null && !clientId.isBlank() && !clientId.equals("test-client-id");
         return ResponseEntity.ok(Map.of(
                 "clientId", configured ? clientId : "",
-                "configured", configured
+                "configured", configured,
+                // Spec 007 RF-02: a tela de login só mostra a demonstração quando ela está ligada
+                "demoLoginEnabled", authService.isDemoLoginEnabled()
         ));
     }
 
     @PostMapping("/google/config")
-    @Operation(summary = "Configurar dinamicamente o Google OAuth Client ID")
+    @PreAuthorize("hasAnyRole('OWNER','ADMIN')")
+    @Operation(summary = "Configurar dinamicamente o Google OAuth Client ID",
+            description = "Spec 007 RF-05: exige login com papel OWNER ou ADMIN")
     public ResponseEntity<Map<String, Object>> updateGoogleConfig(@RequestBody Map<String, String> body) {
         String clientId = body.getOrDefault("clientId", "").trim();
         authService.setGoogleClientId(clientId);

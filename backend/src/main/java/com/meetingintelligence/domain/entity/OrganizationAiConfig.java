@@ -1,5 +1,7 @@
 package com.meetingintelligence.domain.entity;
 
+import com.meetingintelligence.domain.security.EncryptedStringConverter;
+import jakarta.persistence.Convert;
 import com.meetingintelligence.domain.ai.AiModels;
 import jakarta.persistence.*;
 import lombok.*;
@@ -30,14 +32,16 @@ public class OrganizationAiConfig {
     @Builder.Default
     private String activeProvider = "GEMINI"; // GEMINI, GROK, CLAUDE
 
-    @Column(name = "gemini_api_key", length = 500)
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "gemini_api_key", columnDefinition = "TEXT")
     private String geminiApiKey;
 
     @Column(name = "gemini_model", length = 100)
     @Builder.Default
     private String geminiModel = AiModels.GEMINI_DEFAULT;
 
-    @Column(name = "grok_api_key", length = 500)
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "grok_api_key", columnDefinition = "TEXT")
     private String grokApiKey;
 
     @Column(name = "grok_model", length = 100)
@@ -48,13 +52,15 @@ public class OrganizationAiConfig {
      * Chave OpenAI legada: não é mais opção de chat (GPT foi substituído pelo Grok), mas,
      * se já estiver salva, ainda serve de fallback na transcrição do áudio da aba do Meet.
      */
-    @Column(name = "openai_api_key", length = 500)
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "openai_api_key", columnDefinition = "TEXT")
     private String openAiApiKey;
 
     @Column(name = "openai_model", length = 100)
     private String openAiModel;
 
-    @Column(name = "claude_api_key", length = 500)
+    @Convert(converter = EncryptedStringConverter.class)
+    @Column(name = "claude_api_key", columnDefinition = "TEXT")
     private String claudeApiKey;
 
     @Column(name = "claude_model", length = 100)

@@ -31,21 +31,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
         String token = resolveToken(request);
 
-        if (StringUtils.hasText(token) && jwtService.isTokenValid(token)) {
-            Claims claims = jwtService.extractClaims(token);
-            UUID userId = UUID.fromString(claims.getSubject());
-            String email = claims.get("email", String.class);
-            String orgIdStr = claims.get("orgId", String.class);
-            UUID orgId = StringUtils.hasText(orgIdStr) ? UUID.fromString(orgIdStr) : null;
-            String role = claims.get("role", String.class);
-
-            UserPrincipal principal = UserPrincipal.builder()
-                    .id(userId)
-                    .email(email)
-                    .organizationId(orgId)
-                    .role(role != null ? role : "MEMBER")
-                    .build();
-
+        // Spec 007: token sem organização não autentica (antes virava usuário com organização nula)
+        UserPrincipal principal = StringUtils.hasText(token) ? jwtService.toPrincipal(token) : null;
+        if (principal != null) {
             UsernamePasswordAuthenticationToken authentication =
                     new UsernamePasswordAuthenticationToken(principal, null, principal.getAuthorities());
             authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));

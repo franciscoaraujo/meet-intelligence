@@ -203,6 +203,13 @@ public class TranscriptionService {
         return false;
     }
 
+    /** Spec 007 RF-12: o trecho precisa ser da reunião da URL (a guarda já conferiu a organização). */
+    private TranscriptSegment segmentOfMeeting(UUID meetingId, UUID segmentId) {
+        return segmentRepository.findById(segmentId)
+                .filter(s -> s.getMeeting() != null && meetingId.equals(s.getMeeting().getId()))
+                .orElseThrow(() -> new ResourceNotFoundException("Segmento de transcrição não encontrado: " + segmentId));
+    }
+
     /** Horário artificial usado antes da spec 001 (clientes que não enviam o horário de captura). */
     private long legacyStartMs(UUID meetingId) {
         return segmentRepository.findByMeetingIdOrderByCreatedAtAscStartTimeMsAsc(meetingId).size() * 5000L;
@@ -269,9 +276,8 @@ public class TranscriptionService {
 
     /** Correção manual de quem falou (spec 003, RF-09): confiança passa a 1,0. */
     @Transactional
-    public TranscriptSegment updateSegmentSpeaker(UUID segmentId, String speakerLabel, SpeakerRole role) {
-        TranscriptSegment segment = segmentRepository.findById(segmentId)
-                .orElseThrow(() -> new ResourceNotFoundException("Segmento de transcrição não encontrado: " + segmentId));
+    public TranscriptSegment updateSegmentSpeaker(UUID meetingId, UUID segmentId, String speakerLabel, SpeakerRole role) {
+        TranscriptSegment segment = segmentOfMeeting(meetingId, segmentId);
         if (speakerLabel == null || speakerLabel.isBlank()) {
             throw new IllegalArgumentException("speakerLabel é obrigatório.");
         }
@@ -473,9 +479,8 @@ public class TranscriptionService {
     }
 
     @Transactional
-    public TranscriptSegment correctSegment(UUID segmentId, String newText) {
-        TranscriptSegment segment = segmentRepository.findById(segmentId)
-                .orElseThrow(() -> new IllegalArgumentException("Segmento de transcrição não encontrado: " + segmentId));
+    public TranscriptSegment correctSegment(UUID meetingId, UUID segmentId, String newText) {
+        TranscriptSegment segment = segmentOfMeeting(meetingId, segmentId);
 
         // Preserva o texto original e grava a correção
         segment.setCorrectedText(newText);

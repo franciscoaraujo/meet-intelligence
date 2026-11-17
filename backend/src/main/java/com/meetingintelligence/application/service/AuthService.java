@@ -1,8 +1,7 @@
 package com.meetingintelligence.application.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.meetingintelligence.application.dto.AuthResponse;
+import com.meetingintelligence.application.exception.AuthenticationFailedException;
 import com.meetingintelligence.application.dto.GoogleAuthRequest;
 import com.meetingintelligence.domain.entity.Organization;
 import com.meetingintelligence.domain.entity.OrganizationMember;
@@ -12,26 +11,20 @@ import com.meetingintelligence.domain.enums.PlanType;
 import com.meetingintelligence.infrastructure.persistence.repository.OrganizationMemberRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.OrganizationRepository;
 import com.meetingintelligence.infrastructure.persistence.repository.UserRepository;
+import com.meetingintelligence.infrastructure.security.GoogleTokenVerifier;
 import com.meetingintelligence.infrastructure.security.JwtService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpMethod;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.client.RestTemplate;
 
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
 import java.util.UUID;
 
 /**
- * Serviço de autenticação com validação real junto às APIs de OAuth 2.0 do Google:
- * - UserInfo Endpoint (https://www.googleapis.com/oauth2/v3/userinfo) para Access Tokens (ya29.*)
- * - TokenInfo Endpoint (https://oauth2.googleapis.com/tokeninfo) para ID Tokens JWT
+ * Login com Google (spec 007): o token só vale se o Google confirmar que é legítimo, emitido para o
+ * nosso Client ID e com e-mail verificado ({@link GoogleTokenVerifier}). O login de demonstração só
+ * existe com {@code app.auth.demo-login-enabled=true} e só para o e-mail fixo.
  */
 @Service
 @RequiredArgsConstructor
@@ -42,8 +35,13 @@ public class AuthService {
     private final OrganizationRepository organizationRepository;
     private final OrganizationMemberRepository organizationMemberRepository;
     private final JwtService jwtService;
-    private final ObjectMapper objectMapper;
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final GoogleTokenVerifier googleTokens;
+
+    @Value("${app.auth.demo-login-enabled:false}")
+    private boolean demoLoginEnabled;
+
+    @Value("${app.auth.demo-email:demo.user@meetingintelligence.ai}")
+    private String demoEmail;
 
     @Value("${spring.security.oauth2.client.registration.google.client-id:}")
     private String configuredGoogleClientId;
@@ -61,87 +59,51 @@ public class AuthService {
         this.runtimeGoogleClientId = clientId;
     }
 
+    /** Spec 007 RF-02: login de demonstração, desligado por padrão e só para o e-mail fixo. */
+    public boolean isDemoLoginEnabled() {
+        return demoLoginEnabled;
+    }
+
     @Transactional
     public AuthResponse authenticateWithGoogle(GoogleAuthRequest request) {
-        String email = null;
-        String fullName = null;
+        String credential = request.getCredential() != null ? request.getCredential().trim() : "";
+        String oauthAccessToken = request.getAccessToken();
+        if ((oauthAccessToken == null || oauthAccessToken.isBlank()) && credential.startsWith("ya29.")) {
+            oauthAccessToken = credential;
+        }
+
+        String email;
+        String fullName;
         String avatarUrl = null;
         String googleId = null;
-        String oauthAccessToken = request.getAccessToken();
 
-        if (oauthAccessToken == null && request.getCredential() != null && request.getCredential().startsWith("ya29.")) {
-            oauthAccessToken = request.getCredential();
-        }
-
-        // Caso 1: OAuth2 Access Token real do Google -> valida na API oficial /oauth2/v3/userinfo
         if (oauthAccessToken != null && !oauthAccessToken.isBlank()) {
-            try {
-                HttpHeaders headers = new HttpHeaders();
-                headers.setBearerAuth(oauthAccessToken.trim());
-                HttpEntity<Void> entity = new HttpEntity<>(headers);
-                ResponseEntity<String> userInfoRes = restTemplate.exchange(
-                        "https://www.googleapis.com/oauth2/v3/userinfo",
-                        HttpMethod.GET,
-                        entity,
-                        String.class
-                );
-                if (userInfoRes.getStatusCode().is2xxSuccessful() && userInfoRes.getBody() != null) {
-                    JsonNode json = objectMapper.readTree(userInfoRes.getBody());
-                    email = json.path("email").asText(null);
-                    fullName = json.path("name").asText(email != null ? email.split("@")[0] : "Usuário Google");
-                    avatarUrl = json.path("picture").asText(null);
-                    googleId = json.path("sub").asText(UUID.randomUUID().toString());
-                    log.info("Login Google OAuth2 autenticado com sucesso para: {}", email);
-                }
-            } catch (Exception e) {
-                log.error("Falha ao validar Access Token no Google UserInfo: {}", e.getMessage());
-                throw new IllegalArgumentException("O Access Token do Google informado é inválido ou expirou. Autentique-se novamente.");
-            }
-        }
-
-        // Caso 2: Google ID Token JWT (header.payload.signature)
-        if (email == null && request.getCredential() != null) {
-            String cred = request.getCredential().trim();
-            String[] parts = cred.split("\\.");
-            if (parts.length == 3) {
-                // Tenta validar primeiro no endpoint oficial tokeninfo do Google
-                try {
-                    ResponseEntity<String> tokenInfoRes = restTemplate.getForEntity(
-                            "https://oauth2.googleapis.com/tokeninfo?id_token=" + cred,
-                            String.class
-                    );
-                    if (tokenInfoRes.getStatusCode().is2xxSuccessful() && tokenInfoRes.getBody() != null) {
-                        JsonNode json = objectMapper.readTree(tokenInfoRes.getBody());
-                        email = json.path("email").asText(null);
-                        fullName = json.path("name").asText(email != null ? email.split("@")[0] : "Usuário Google");
-                        avatarUrl = json.path("picture").asText(null);
-                        googleId = json.path("sub").asText(UUID.randomUUID().toString());
-                        log.info("Google ID Token validado oficialmente para: {}", email);
-                    }
-                } catch (Exception ex) {
-                    // Fallback para decodificação de JWT em ambiente de testes automatizados
-                    try {
-                        String payloadJson = new String(Base64.getUrlDecoder().decode(parts[1]), StandardCharsets.UTF_8);
-                        JsonNode json = objectMapper.readTree(payloadJson);
-                        email = json.has("email") ? json.get("email").asText() : null;
-                        fullName = json.has("name") ? json.get("name").asText() : (email != null ? email.split("@")[0] : "Usuário");
-                        avatarUrl = json.has("picture") ? json.get("picture").asText() : null;
-                        googleId = json.has("sub") ? json.get("sub").asText() : UUID.randomUUID().toString();
-                    } catch (Exception decodeEx) {
-                        throw new IllegalArgumentException("Credencial JWT do Google inválida.");
-                    }
-                }
-            } else if (cred.contains("@")) {
-                // Login de demonstração/testes quando um e-mail é passado explicitamente
-                email = cred;
-                fullName = "Demonstração Corporativa";
-            } else {
-                throw new IllegalArgumentException("Credencial do Google inválida. Use uma conta válida do Google.");
-            }
+            // RF-04: Access Token conferido no Google (aud/azp) antes de ler o perfil
+            GoogleTokenVerifier.GoogleIdentity id = googleTokens.verifyAccessToken(oauthAccessToken.trim(), getGoogleClientId());
+            email = id.email();
+            fullName = id.name();
+            avatarUrl = id.picture();
+            googleId = id.subject();
+        } else if (demoLoginEnabled && credential.equalsIgnoreCase(demoEmail)) {
+            // RF-02: demonstração só com a configuração ligada e só para o e-mail fixo. Vem antes do
+            // ID Token porque o e-mail de demonstração também tem três partes separadas por ponto.
+            email = demoEmail;
+            fullName = "Demonstração Corporativa";
+            log.warn("Login de demonstração usado (app.auth.demo-login-enabled=true)");
+        } else if (!credential.contains("@") && credential.split("\\.").length == 3) {
+            // RF-03: ID Token (JWT) só vale se o Google confirmar; sem decodificação local
+            GoogleTokenVerifier.GoogleIdentity id = googleTokens.verifyIdToken(credential, getGoogleClientId());
+            email = id.email();
+            fullName = id.name();
+            avatarUrl = id.picture();
+            googleId = id.subject();
+        } else {
+            // RF-01: um e-mail qualquer não é credencial
+            throw new AuthenticationFailedException("Credencial do Google inválida. Entre com sua conta Google.");
         }
 
         if (email == null || email.isBlank()) {
-            throw new IllegalArgumentException("Não foi possível obter o e-mail da sua conta Google.");
+            throw new AuthenticationFailedException("Não foi possível obter o e-mail da sua conta Google.");
         }
 
         final String finalEmail = email;

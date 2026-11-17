@@ -1,5 +1,7 @@
 package com.meetingintelligence.domain.entity;
 
+import com.meetingintelligence.domain.security.EncryptedStringConverter;
+import jakarta.persistence.Convert;
 import jakarta.persistence.*;
 import lombok.*;
 import org.hibernate.annotations.CreationTimestamp;
@@ -33,6 +35,7 @@ public class User {
     @Column(name = "google_id", unique = true)
     private String googleId;
 
+    @Convert(converter = EncryptedStringConverter.class)
     @Column(name = "google_refresh_token", columnDefinition = "TEXT")
     private String googleRefreshToken;
 

@@ -136,7 +136,12 @@ class TranscriptionPipelineE2EIT extends AbstractPostgresIT {
                 return true;
             }
         });
-        stomp = client.connectAsync("http://localhost:" + port + "/ws", new StompSessionHandlerAdapter() {})
+        // Spec 007 RF-07: o CONNECT leva o token; sem ele a conexão é recusada
+        StompHeaders connectHeaders = new StompHeaders();
+        connectHeaders.add("Authorization", "Bearer " + token);
+        stomp = client.connectAsync("http://localhost:" + port + "/ws",
+                        new org.springframework.web.socket.WebSocketHttpHeaders(), connectHeaders,
+                        new StompSessionHandlerAdapter() {})
                 .get(10, TimeUnit.SECONDS);
         subscribe("transcripts", transcriptsTopic);
         subscribe("questions", questionsTopic);
